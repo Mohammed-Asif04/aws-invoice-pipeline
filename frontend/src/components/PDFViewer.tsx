@@ -1,21 +1,30 @@
-import { Maximize2 } from 'lucide-react';
+import { Maximize2, ExternalLink } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
 interface PDFViewerProps {
   fileName?: string;
+  title?: string;
+  showOpenInNewTab?: boolean;
 }
 
-export default function PDFViewer({ fileName: _fileName }: PDFViewerProps) {
+export default function PDFViewer({ fileName: _fileName, title, showOpenInNewTab }: PDFViewerProps) {
   return (
     <Card className="border border-border">
       <CardHeader className="pb-3 flex flex-row items-center justify-between">
         <CardTitle className="text-base font-semibold font-heading">
-          3. Document Preview
+          {title || '3. Document Preview'}
         </CardTitle>
-        <button className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 font-medium transition-colors">
-          View Full Size
-          <Maximize2 className="w-3.5 h-3.5" />
-        </button>
+        {showOpenInNewTab ? (
+          <button className="flex items-center gap-1.5 text-xs text-primary hover:text-primary/80 font-medium transition-colors border border-border px-2.5 py-1 rounded-md bg-card">
+            Open in New Tab
+            <ExternalLink className="w-3.5 h-3.5" />
+          </button>
+        ) : (
+          <button className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 font-medium transition-colors">
+            View Full Size
+            <Maximize2 className="w-3.5 h-3.5" />
+          </button>
+        )}
       </CardHeader>
       <CardContent className="p-0">
         {/* PDF Toolbar */}

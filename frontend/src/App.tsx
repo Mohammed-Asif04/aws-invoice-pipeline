@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Sidebar from '@/components/Sidebar';
 import UploadInvoice from '@/pages/UploadInvoice';
 import InvoiceList from '@/pages/InvoiceList';
+import InvoiceDetail from '@/pages/InvoiceDetail';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import Header from '@/components/Header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -171,7 +172,7 @@ export default function App() {
               <Route path="/" element={<Dashboard />} />
               <Route path="/upload" element={<UploadInvoice />} />
               <Route path="/invoices" element={<InvoiceList />} />
-              <Route path="/invoices/:invoiceId" element={<PagePlaceholder title="Invoice Detail" />} />
+              <Route path="/invoices/:invoiceId" element={<InvoiceDetail />} />
               <Route path="/approvals" element={<PagePlaceholder title="Approval & Exceptions" />} />
               <Route path="/analytics" element={<PagePlaceholder title="Analytics" />} />
               <Route path="/settings" element={<PagePlaceholder title="Settings" />} />
