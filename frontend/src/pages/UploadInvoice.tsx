@@ -114,7 +114,7 @@ export default function UploadInvoice() {
                   <Label htmlFor="vendor" className="text-xs font-medium text-muted-foreground">
                     Vendor (Optional)
                   </Label>
-                  <Select value={vendor} onValueChange={setVendor}>
+                  <Select value={vendor} onValueChange={(val) => setVendor(val || '')}>
                     <SelectTrigger id="vendor" className="h-10">
                       <SelectValue placeholder="Select or type vendor name" />
                     </SelectTrigger>
