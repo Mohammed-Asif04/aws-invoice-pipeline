@@ -1,6 +1,6 @@
 // Invoice Processing System - Shared TypeScript Interfaces
 
-export type InvoiceStatus = 'Processed' | 'In Progress' | 'In Review' | 'Exception' | 'Resolved';
+export type InvoiceStatus = 'Processed' | 'In Progress' | 'In Review' | 'Pending Review' | 'Exception' | 'Resolved';
 
 export type ExceptionType = 'Missing GSTIN' | 'Amount Mismatch' | 'Vendor Not Found' | 'Duplicate Invoice' | 'Low Confidence Score';
 

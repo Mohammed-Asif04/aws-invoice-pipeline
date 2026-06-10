@@ -11,6 +11,9 @@ const statusConfig: Record<InvoiceStatus, { className: string }> = {
   'In Review': {
     className: 'bg-orange-50 text-orange-700 border-orange-200 hover:bg-orange-100',
   },
+  'Pending Review': {
+    className: 'bg-orange-50 text-orange-700 border-orange-200 hover:bg-orange-100',
+  },
   'Exception': {
     className: 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100',
   },

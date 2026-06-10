@@ -3,6 +3,7 @@ import Sidebar from '@/components/Sidebar';
 import UploadInvoice from '@/pages/UploadInvoice';
 import InvoiceList from '@/pages/InvoiceList';
 import InvoiceDetail from '@/pages/InvoiceDetail';
+import Approvals from '@/pages/Approvals';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import Header from '@/components/Header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -173,7 +174,7 @@ export default function App() {
               <Route path="/upload" element={<UploadInvoice />} />
               <Route path="/invoices" element={<InvoiceList />} />
               <Route path="/invoices/:invoiceId" element={<InvoiceDetail />} />
-              <Route path="/approvals" element={<PagePlaceholder title="Approval & Exceptions" />} />
+              <Route path="/approvals" element={<Approvals />} />
               <Route path="/analytics" element={<PagePlaceholder title="Analytics" />} />
               <Route path="/settings" element={<PagePlaceholder title="Settings" />} />
               <Route path="/audit-logs" element={<PagePlaceholder title="Audit Logs" />} />
