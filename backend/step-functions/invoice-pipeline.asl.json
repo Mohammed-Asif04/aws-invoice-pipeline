@@ -1,0 +1,322 @@
+{
+  "Comment": "AWS Invoice Processing Pipeline — Main State Machine. Orchestrates: Extract → Validate → Check Anomalies → Approve/Persist → Notify",
+  "StartAt": "ExtractDocument",
+  "States": {
+    "ExtractDocument": {
+      "Type": "Task",
+      "Resource": "${TextractProcessorFunctionArn}",
+      "InputPath": "$",
+      "ResultPath": "$",
+      "TimeoutSeconds": 120,
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "States.TaskFailed",
+            "States.Timeout",
+            "ThrottlingException",
+            "ProvisionedThroughputExceededException"
+          ],
+          "IntervalSeconds": 5,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "HandleExtractionError",
+          "ResultPath": "$.error"
+        }
+      ],
+      "Next": "LogExtractionComplete"
+    },
+
+    "LogExtractionComplete": {
+      "Type": "Task",
+      "Resource": "${AuditLoggerFunctionArn}",
+      "Parameters": {
+        "invoiceId.$": "$.invoiceId",
+        "action": "LOG_EVENT",
+        "event": "Document extraction completed",
+        "eventType": "EXTRACTION",
+        "user": "system",
+        "details.$": "States.Format('Textract extraction complete for invoice {}', $.invoiceId)"
+      },
+      "ResultPath": "$.auditLog",
+      "Next": "ValidateDocument"
+    },
+
+    "ValidateDocument": {
+      "Type": "Task",
+      "Resource": "${BedrockValidatorFunctionArn}",
+      "InputPath": "$",
+      "ResultPath": "$",
+      "TimeoutSeconds": 60,
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "States.TaskFailed",
+            "ThrottlingException",
+            "ModelTimeoutException"
+          ],
+          "IntervalSeconds": 10,
+          "MaxAttempts": 2,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "HandleValidationError",
+          "ResultPath": "$.error"
+        }
+      ],
+      "Next": "CheckAnomalies"
+    },
+
+    "CheckAnomalies": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.validation.status",
+          "StringEquals": "PROCESSED",
+          "Next": "PersistResults"
+        },
+        {
+          "Variable": "$.validation.status",
+          "StringEquals": "EXCEPTION",
+          "Next": "HumanApproval"
+        },
+        {
+          "Variable": "$.validation.status",
+          "StringEquals": "IN_REVIEW",
+          "Next": "HumanApproval"
+        }
+      ],
+      "Default": "HumanApproval"
+    },
+
+    "HumanApproval": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke.waitForTaskToken",
+      "Parameters": {
+        "FunctionName": "${ApprovalHandlerFunctionArn}",
+        "Payload": {
+          "invoiceId.$": "$.invoiceId",
+          "vendorName.$": "$.extraction.vendorName",
+          "totalAmount.$": "$.extraction.totalAmount",
+          "anomalies.$": "$.validation.anomalies",
+          "taskToken.$": "$$.Task.Token",
+          "action": "SEND_APPROVAL_EMAIL",
+          "assignedTo": "reviewer",
+          "assignedToEmail": "${ReviewerEmail}"
+        }
+      },
+      "TimeoutSeconds": 259200,
+      "HeartbeatSeconds": 3600,
+      "Retry": [],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.Timeout"],
+          "Next": "HandleApprovalTimeout",
+          "ResultPath": "$.error"
+        },
+        {
+          "ErrorEquals": ["REJECTED"],
+          "Next": "HandleRejection",
+          "ResultPath": "$.rejectionResult"
+        },
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "HandleApprovalError",
+          "ResultPath": "$.error"
+        }
+      ],
+      "ResultPath": "$.approvalResult",
+      "Next": "ProcessApprovalResult"
+    },
+
+    "ProcessApprovalResult": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.approvalResult.action",
+          "StringEquals": "APPROVE",
+          "Next": "PersistResults"
+        },
+        {
+          "Variable": "$.approvalResult.action",
+          "StringEquals": "REPROCESS",
+          "Next": "ExtractDocument"
+        }
+      ],
+      "Default": "HandleRejection"
+    },
+
+    "PersistResults": {
+      "Type": "Task",
+      "Resource": "${AuditLoggerFunctionArn}",
+      "Parameters": {
+        "invoiceId.$": "$.invoiceId",
+        "action": "PERSIST_RESULTS",
+        "pipelineState.$": "$"
+      },
+      "ResultPath": "$.persistResult",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.TaskFailed"],
+          "IntervalSeconds": 5,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "HandlePersistenceError",
+          "ResultPath": "$.error"
+        }
+      ],
+      "Next": "NotifyComplete"
+    },
+
+    "NotifyComplete": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "${SNSTopicArn}",
+        "Subject.$": "States.Format('Invoice {} — Processing Complete', $.invoiceId)",
+        "Message.$": "States.Format('Invoice {} has been processed successfully. Status: {}. Audit report stored at: {}', $.invoiceId, $.persistResult.status, $.persistResult.s3AuditKey)"
+      },
+      "ResultPath": "$.notificationResult",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.TaskFailed"],
+          "IntervalSeconds": 5,
+          "MaxAttempts": 2,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "PipelineComplete",
+          "ResultPath": "$.notificationError"
+        }
+      ],
+      "Next": "PipelineComplete"
+    },
+
+    "PipelineComplete": {
+      "Type": "Succeed"
+    },
+
+    "HandleRejection": {
+      "Type": "Task",
+      "Resource": "${AuditLoggerFunctionArn}",
+      "Parameters": {
+        "invoiceId.$": "$.invoiceId",
+        "action": "LOG_EVENT",
+        "event": "Invoice rejected",
+        "eventType": "REJECTION",
+        "user": "reviewer",
+        "details": "Invoice was rejected during approval review"
+      },
+      "ResultPath": "$.rejectionAudit",
+      "Next": "PipelineRejected"
+    },
+
+    "PipelineRejected": {
+      "Type": "Fail",
+      "Error": "InvoiceRejected",
+      "Cause": "Invoice was rejected during the approval review process"
+    },
+
+    "HandleApprovalTimeout": {
+      "Type": "Task",
+      "Resource": "${AuditLoggerFunctionArn}",
+      "Parameters": {
+        "invoiceId.$": "$.invoiceId",
+        "action": "LOG_EVENT",
+        "event": "Approval timed out (72 hours)",
+        "eventType": "ERROR",
+        "user": "system",
+        "details": "Human approval task timed out after 72 hours. Invoice auto-escalated."
+      },
+      "ResultPath": "$.timeoutAudit",
+      "Next": "PipelineTimedOut"
+    },
+
+    "PipelineTimedOut": {
+      "Type": "Fail",
+      "Error": "ApprovalTimeout",
+      "Cause": "Human approval timed out after 72 hours"
+    },
+
+    "HandleExtractionError": {
+      "Type": "Task",
+      "Resource": "${AuditLoggerFunctionArn}",
+      "Parameters": {
+        "invoiceId.$": "$.invoiceId",
+        "action": "LOG_EVENT",
+        "event": "Textract extraction failed",
+        "eventType": "ERROR",
+        "user": "system",
+        "details.$": "States.Format('Extraction error: {}', $.error.Cause)"
+      },
+      "ResultPath": "$.errorAudit",
+      "Next": "PipelineFailed"
+    },
+
+    "HandleValidationError": {
+      "Type": "Task",
+      "Resource": "${AuditLoggerFunctionArn}",
+      "Parameters": {
+        "invoiceId.$": "$.invoiceId",
+        "action": "LOG_EVENT",
+        "event": "Bedrock validation failed",
+        "eventType": "ERROR",
+        "user": "system",
+        "details.$": "States.Format('Validation error: {}', $.error.Cause)"
+      },
+      "ResultPath": "$.errorAudit",
+      "Next": "PipelineFailed"
+    },
+
+    "HandleApprovalError": {
+      "Type": "Task",
+      "Resource": "${AuditLoggerFunctionArn}",
+      "Parameters": {
+        "invoiceId.$": "$.invoiceId",
+        "action": "LOG_EVENT",
+        "event": "Approval process error",
+        "eventType": "ERROR",
+        "user": "system",
+        "details.$": "States.Format('Approval error: {}', $.error.Cause)"
+      },
+      "ResultPath": "$.errorAudit",
+      "Next": "PipelineFailed"
+    },
+
+    "HandlePersistenceError": {
+      "Type": "Task",
+      "Resource": "${AuditLoggerFunctionArn}",
+      "Parameters": {
+        "invoiceId.$": "$.invoiceId",
+        "action": "LOG_EVENT",
+        "event": "Result persistence failed",
+        "eventType": "ERROR",
+        "user": "system",
+        "details.$": "States.Format('Persistence error: {}', $.error.Cause)"
+      },
+      "ResultPath": "$.errorAudit",
+      "Next": "PipelineFailed"
+    },
+
+    "PipelineFailed": {
+      "Type": "Fail",
+      "Error": "PipelineError",
+      "Cause": "An error occurred during invoice pipeline processing"
+    }
+  }
+}

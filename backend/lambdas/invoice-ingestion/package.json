@@ -1,0 +1,25 @@
+{
+  "name": "invoice-ingestion",
+  "version": "1.0.0",
+  "description": "SES email ingestion + API upload → S3 storage → pipeline trigger",
+  "main": "handler.ts",
+  "scripts": {
+    "build": "tsc",
+    "lint": "eslint handler.ts"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.700.0",
+    "@aws-sdk/client-s3": "^3.700.0",
+    "@aws-sdk/client-secrets-manager": "^3.700.0",
+    "@aws-sdk/client-sfn": "^3.700.0",
+    "@aws-sdk/lib-dynamodb": "^3.700.0",
+    "mailparser": "^3.7.2",
+    "uuid": "^11.1.0"
+  },
+  "devDependencies": {
+    "@types/mailparser": "^3.4.6",
+    "@types/node": "^22.15.0",
+    "@types/uuid": "^10.0.0",
+    "typescript": "^5.8.0"
+  }
+}

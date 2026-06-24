@@ -1,0 +1,200 @@
+{
+  "Comment": "Error Handling Sub-Workflow — Handles failed pipeline executions with retries and escalation",
+  "StartAt": "ClassifyError",
+  "States": {
+    "ClassifyError": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.error.Error",
+          "StringEquals": "ThrottlingException",
+          "Next": "WaitAndRetry"
+        },
+        {
+          "Variable": "$.error.Error",
+          "StringEquals": "ProvisionedThroughputExceededException",
+          "Next": "WaitAndRetry"
+        },
+        {
+          "Variable": "$.error.Error",
+          "StringEquals": "ModelTimeoutException",
+          "Next": "WaitAndRetry"
+        },
+        {
+          "Variable": "$.error.Error",
+          "StringEquals": "ServiceUnavailableException",
+          "Next": "WaitAndRetry"
+        },
+        {
+          "Variable": "$.error.Error",
+          "StringEquals": "InvoiceRejected",
+          "Next": "LogRejection"
+        },
+        {
+          "Variable": "$.error.Error",
+          "StringEquals": "ApprovalTimeout",
+          "Next": "EscalateTimeout"
+        }
+      ],
+      "Default": "LogUnrecoverableError"
+    },
+
+    "WaitAndRetry": {
+      "Type": "Wait",
+      "Seconds": 30,
+      "Next": "IncrementRetryCount"
+    },
+
+    "IncrementRetryCount": {
+      "Type": "Pass",
+      "Parameters": {
+        "invoiceId.$": "$.invoiceId",
+        "s3Bucket.$": "$.s3Bucket",
+        "s3Key.$": "$.s3Key",
+        "source.$": "$.source",
+        "retryCount.$": "States.MathAdd($.retryCount, 1)"
+      },
+      "ResultPath": "$",
+      "Next": "CheckRetryLimit"
+    },
+
+    "CheckRetryLimit": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.retryCount",
+          "NumericGreaterThan": 3,
+          "Next": "MaxRetriesExceeded"
+        }
+      ],
+      "Default": "RetryPipeline"
+    },
+
+    "RetryPipeline": {
+      "Type": "Task",
+      "Resource": "${TextractProcessorFunctionArn}",
+      "InputPath": "$",
+      "ResultPath": "$",
+      "TimeoutSeconds": 120,
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "ClassifyError",
+          "ResultPath": "$.error"
+        }
+      ],
+      "Next": "RetrySuccess"
+    },
+
+    "RetrySuccess": {
+      "Type": "Succeed"
+    },
+
+    "MaxRetriesExceeded": {
+      "Type": "Task",
+      "Resource": "${AuditLoggerFunctionArn}",
+      "Parameters": {
+        "invoiceId.$": "$.invoiceId",
+        "action": "LOG_EVENT",
+        "event": "Maximum retry attempts exceeded",
+        "eventType": "ERROR",
+        "user": "system",
+        "details.$": "States.Format('Invoice {} failed after {} retry attempts', $.invoiceId, $.retryCount)"
+      },
+      "ResultPath": "$.errorAudit",
+      "Next": "SendErrorNotification"
+    },
+
+    "LogRejection": {
+      "Type": "Task",
+      "Resource": "${AuditLoggerFunctionArn}",
+      "Parameters": {
+        "invoiceId.$": "$.invoiceId",
+        "action": "LOG_EVENT",
+        "event": "Invoice rejected during review",
+        "eventType": "REJECTION",
+        "user": "system",
+        "details.$": "States.Format('Invoice {} was rejected: {}', $.invoiceId, $.error.Cause)"
+      },
+      "ResultPath": "$.rejectionAudit",
+      "Next": "RejectionComplete"
+    },
+
+    "RejectionComplete": {
+      "Type": "Succeed"
+    },
+
+    "EscalateTimeout": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "${SNSTopicArn}",
+        "Subject.$": "States.Format('[ESCALATION] Invoice {} — Approval Timed Out', $.invoiceId)",
+        "Message.$": "States.Format('Invoice {} has been pending approval for 72 hours and requires immediate attention. The approval request has timed out and needs manual intervention.', $.invoiceId)"
+      },
+      "ResultPath": "$.escalationResult",
+      "Next": "LogEscalation"
+    },
+
+    "LogEscalation": {
+      "Type": "Task",
+      "Resource": "${AuditLoggerFunctionArn}",
+      "Parameters": {
+        "invoiceId.$": "$.invoiceId",
+        "action": "LOG_EVENT",
+        "event": "Approval timeout — escalated",
+        "eventType": "ERROR",
+        "user": "system",
+        "details": "Invoice approval timed out after 72 hours. Escalation notification sent."
+      },
+      "ResultPath": "$.escalationAudit",
+      "Next": "EscalationComplete"
+    },
+
+    "EscalationComplete": {
+      "Type": "Fail",
+      "Error": "EscalatedTimeout",
+      "Cause": "Approval timed out and has been escalated for manual intervention"
+    },
+
+    "LogUnrecoverableError": {
+      "Type": "Task",
+      "Resource": "${AuditLoggerFunctionArn}",
+      "Parameters": {
+        "invoiceId.$": "$.invoiceId",
+        "action": "LOG_EVENT",
+        "event": "Unrecoverable pipeline error",
+        "eventType": "ERROR",
+        "user": "system",
+        "details.$": "States.Format('Unrecoverable error: {} — {}', $.error.Error, $.error.Cause)"
+      },
+      "ResultPath": "$.errorAudit",
+      "Next": "SendErrorNotification"
+    },
+
+    "SendErrorNotification": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "${SNSTopicArn}",
+        "Subject.$": "States.Format('[ERROR] Invoice {} — Pipeline Failed', $.invoiceId)",
+        "Message.$": "States.Format('Invoice pipeline failed for {}. Error: {} — {}. Manual intervention required.', $.invoiceId, $.error.Error, $.error.Cause)"
+      },
+      "ResultPath": "$.notificationResult",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "FinalFailure",
+          "ResultPath": "$.notificationError"
+        }
+      ],
+      "Next": "FinalFailure"
+    },
+
+    "FinalFailure": {
+      "Type": "Fail",
+      "Error": "PipelineFailure",
+      "Cause": "Invoice pipeline encountered an unrecoverable error after all retry attempts"
+    }
+  }
+}
