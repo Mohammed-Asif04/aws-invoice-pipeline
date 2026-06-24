@@ -74,3 +74,41 @@ export interface NavItem {
   path: string;
   icon: string;
 }
+
+export interface AuditEntry {
+  id: string;
+  invoiceId: string;
+  event: string;
+  eventType: 'ingestion' | 'extraction' | 'validation' | 'approval' | 'rejection' | 'reprocess' | 'persistence';
+  timestamp: string;
+  user: string;
+  details: string;
+  metadata?: Record<string, string>;
+}
+
+export interface ProcessingTrend {
+  date: string;
+  processed: number;
+  exceptions: number;
+  inProgress: number;
+}
+
+export interface ExceptionBreakdown {
+  type: ExceptionType;
+  count: number;
+  percentage: number;
+}
+
+export interface VendorMetric {
+  vendor: string;
+  totalInvoices: number;
+  totalValue: number;
+  avgConfidence: number;
+  successRate: number;
+}
+
+export interface StageMetric {
+  stage: string;
+  avgTimeMs: number;
+  p95TimeMs: number;
+}
