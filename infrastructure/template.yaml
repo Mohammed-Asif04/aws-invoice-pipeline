@@ -1,0 +1,653 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  AWS Invoice Processing Pipeline — Event-driven invoice processing with
+  Textract OCR, Bedrock AI validation, Step Functions orchestration,
+  and human-in-the-loop approval workflow.
+
+# =============================================================================
+# Parameters
+# =============================================================================
+Parameters:
+  Environment:
+    Type: String
+    Default: prod
+    AllowedValues: [dev, staging, prod]
+    Description: Deployment environment
+
+  ReviewerEmail:
+    Type: String
+    Default: mohad.asif0407@gmail.com
+    Description: Email address for invoice review notifications
+
+  SenderEmail:
+    Type: String
+    Default: mohad.asif0407@gmail.com
+    Description: Verified SES email address for sending notifications
+
+  BedrockModelId:
+    Type: String
+    Default: anthropic.claude-3-sonnet-20240229-v1:0
+    Description: Bedrock model ID for invoice validation
+
+  ConfidenceThreshold:
+    Type: String
+    Default: '85'
+    Description: Minimum confidence score for auto-approval
+
+# =============================================================================
+# Global Settings
+# =============================================================================
+Globals:
+  Function:
+    Timeout: 120
+    MemorySize: 512
+    Runtime: nodejs20.x
+    Architectures:
+      - x86_64
+    Environment:
+      Variables:
+        AWS_NODEJS_CONNECTION_REUSE_ENABLED: '1'
+        ENVIRONMENT: !Ref Environment
+        INVOICE_TABLE: !Ref InvoiceTable
+        AUDIT_TABLE: !Ref AuditTable
+        RAW_BUCKET: !Ref RawBucket
+        AUDIT_BUCKET: !Ref AuditBucket
+        SNS_TOPIC_ARN: !Ref PipelineNotificationTopic
+        SES_SENDER_EMAIL: !Ref SenderEmail
+    Tags:
+      Project: aws-invoice-pipeline
+      Environment: !Ref Environment
+
+# =============================================================================
+# Resources
+# =============================================================================
+Resources:
+
+  # ---------------------------------------------------------------------------
+  # S3 Buckets
+  # ---------------------------------------------------------------------------
+
+  RawBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'invoice-pipeline-raw-${AWS::AccountId}'
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders: ['*']
+            AllowedMethods: [GET, PUT, POST]
+            AllowedOrigins: ['*']
+            MaxAge: 3600
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: 's3:ObjectCreated:*'
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: suffix
+                    Value: '.pdf'
+            Function: !GetAtt InvoiceIngestionFunction.Arn
+
+  AuditBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'invoice-pipeline-audit-${AWS::AccountId}'
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: ArchiveOldAuditData
+            Status: Enabled
+            Transitions:
+              - TransitionInDays: 90
+                StorageClass: GLACIER
+            ExpirationInDays: 2555  # 7 years retention
+
+  # S3 Bucket Policy — Raw Bucket
+  RawBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref RawBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowSESPut
+            Effect: Allow
+            Principal:
+              Service: ses.amazonaws.com
+            Action: s3:PutObject
+            Resource: !Sub '${RawBucket.Arn}/*'
+            Condition:
+              StringEquals:
+                'aws:SourceAccount': !Ref 'AWS::AccountId'
+
+  # ---------------------------------------------------------------------------
+  # DynamoDB Tables
+  # ---------------------------------------------------------------------------
+
+  InvoiceTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub 'InvoiceRecords-${Environment}'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: invoiceId
+          AttributeType: S
+        - AttributeName: vendorId
+          AttributeType: S
+        - AttributeName: status
+          AttributeType: S
+        - AttributeName: invoiceNumber
+          AttributeType: S
+        - AttributeName: updatedAt
+          AttributeType: S
+      KeySchema:
+        - AttributeName: invoiceId
+          KeyType: HASH
+        - AttributeName: vendorId
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: status-index
+          KeySchema:
+            - AttributeName: status
+              KeyType: HASH
+            - AttributeName: updatedAt
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: invoiceNumber-index
+          KeySchema:
+            - AttributeName: invoiceNumber
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      Tags:
+        - Key: Project
+          Value: aws-invoice-pipeline
+
+  AuditTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub 'AuditEntries-${Environment}'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: auditId
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: S
+        - AttributeName: invoiceId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: auditId
+          KeyType: HASH
+        - AttributeName: timestamp
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: invoiceId-index
+          KeySchema:
+            - AttributeName: invoiceId
+              KeyType: HASH
+            - AttributeName: timestamp
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      Tags:
+        - Key: Project
+          Value: aws-invoice-pipeline
+
+  # ---------------------------------------------------------------------------
+  # SNS Topic
+  # ---------------------------------------------------------------------------
+
+  PipelineNotificationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub 'InvoicePipelineNotifications-${Environment}'
+      DisplayName: Invoice Pipeline Notifications
+      Tags:
+        - Key: Project
+          Value: aws-invoice-pipeline
+
+  PipelineNotificationSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref PipelineNotificationTopic
+      Protocol: email
+      Endpoint: !Ref ReviewerEmail
+
+  # ---------------------------------------------------------------------------
+  # Lambda Functions
+  # ---------------------------------------------------------------------------
+
+  # --- Invoice Ingestion Lambda ---
+  InvoiceIngestionFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'invoice-ingestion-${Environment}'
+      Handler: handler.handler
+      CodeUri: ../backend/lambdas/invoice-ingestion/
+      Description: Receives invoices via SES/S3/API Gateway, stores PDFs, starts pipeline
+      Timeout: 60
+      MemorySize: 512
+      Environment:
+        Variables:
+          STATE_MACHINE_ARN: !Ref InvoicePipelineStateMachine
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !Ref RawBucket
+        - S3ReadPolicy:
+            BucketName: !Ref RawBucket
+        - DynamoDBCrudPolicy:
+            TableName: !Ref InvoiceTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AuditTable
+        - StepFunctionsExecutionPolicy:
+            StateMachineName: !GetAtt InvoicePipelineStateMachine.Name
+      Events:
+        UploadApi:
+          Type: Api
+          Properties:
+            RestApiId: !Ref PipelineApi
+            Path: /upload
+            Method: POST
+        UploadApiOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref PipelineApi
+            Path: /upload
+            Method: OPTIONS
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: true
+        Target: 'es2022'
+        Sourcemap: true
+        EntryPoints:
+          - handler.ts
+        External:
+          - '@aws-sdk/*'
+
+  # Permission for S3 to invoke Ingestion Lambda
+  InvoiceIngestionS3Permission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref InvoiceIngestionFunction
+      Action: lambda:InvokeFunction
+      Principal: s3.amazonaws.com
+      SourceAccount: !Ref 'AWS::AccountId'
+      SourceArn: !GetAtt RawBucket.Arn
+
+  # --- Textract Processor Lambda ---
+  TextractProcessorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'textract-processor-${Environment}'
+      Handler: handler.handler
+      CodeUri: ../backend/lambdas/textract-processor/
+      Description: Processes invoice PDFs using Amazon Textract AnalyzeExpense
+      Timeout: 120
+      MemorySize: 1024
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Ref RawBucket
+        - S3CrudPolicy:
+            BucketName: !Ref AuditBucket
+        - DynamoDBCrudPolicy:
+            TableName: !Ref InvoiceTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AuditTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - textract:AnalyzeExpense
+                - textract:AnalyzeDocument
+                - textract:DetectDocumentText
+              Resource: '*'
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: true
+        Target: 'es2022'
+        Sourcemap: true
+        EntryPoints:
+          - handler.ts
+        External:
+          - '@aws-sdk/*'
+
+  # --- Bedrock Validator Lambda ---
+  BedrockValidatorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'bedrock-validator-${Environment}'
+      Handler: handler.handler
+      CodeUri: ../backend/lambdas/bedrock-validator/
+      Description: Validates Textract extraction using Amazon Bedrock Claude
+      Timeout: 90
+      MemorySize: 512
+      Environment:
+        Variables:
+          BEDROCK_MODEL_ID: !Ref BedrockModelId
+          CONFIDENCE_THRESHOLD: !Ref ConfidenceThreshold
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref InvoiceTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AuditTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+                - bedrock:InvokeModelWithResponseStream
+              Resource: !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/*'
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: true
+        Target: 'es2022'
+        Sourcemap: true
+        EntryPoints:
+          - handler.ts
+        External:
+          - '@aws-sdk/*'
+
+  # --- Approval Handler Lambda ---
+  ApprovalHandlerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'approval-handler-${Environment}'
+      Handler: handler.handler
+      CodeUri: ../backend/lambdas/approval-handler/
+      Description: Handles approve/reject/reprocess actions and serves API endpoints
+      Timeout: 30
+      MemorySize: 256
+      Environment:
+        Variables:
+          APPROVAL_API_URL: !Sub 'https://${PipelineApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
+          REVIEWER_EMAIL: !Ref ReviewerEmail
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref InvoiceTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AuditTable
+        - SNSPublishMessagePolicy:
+            TopicName: !GetAtt PipelineNotificationTopic.TopicName
+        - Statement:
+            - Effect: Allow
+              Action:
+                - states:SendTaskSuccess
+                - states:SendTaskFailure
+                - states:SendTaskHeartbeat
+              Resource: !Ref InvoicePipelineStateMachine
+            - Effect: Allow
+              Action:
+                - ses:SendEmail
+                - ses:SendRawEmail
+              Resource: '*'
+              Condition:
+                StringEquals:
+                  'ses:FromAddress': !Ref SenderEmail
+      Events:
+        # Approval callbacks (email links)
+        ApproveCallback:
+          Type: Api
+          Properties:
+            RestApiId: !Ref PipelineApi
+            Path: /approve
+            Method: GET
+        RejectCallback:
+          Type: Api
+          Properties:
+            RestApiId: !Ref PipelineApi
+            Path: /reject
+            Method: GET
+        # API endpoints for React frontend
+        PostApprovals:
+          Type: Api
+          Properties:
+            RestApiId: !Ref PipelineApi
+            Path: /approvals
+            Method: POST
+        GetInvoices:
+          Type: Api
+          Properties:
+            RestApiId: !Ref PipelineApi
+            Path: /invoices
+            Method: GET
+        GetInvoiceDetail:
+          Type: Api
+          Properties:
+            RestApiId: !Ref PipelineApi
+            Path: /invoices/{invoiceId}
+            Method: GET
+        GetExceptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref PipelineApi
+            Path: /exceptions
+            Method: GET
+        GetAuditLogs:
+          Type: Api
+          Properties:
+            RestApiId: !Ref PipelineApi
+            Path: /audit
+            Method: GET
+        GetDashboard:
+          Type: Api
+          Properties:
+            RestApiId: !Ref PipelineApi
+            Path: /dashboard
+            Method: GET
+        # CORS preflight for all API paths
+        OptionsApprovals:
+          Type: Api
+          Properties:
+            RestApiId: !Ref PipelineApi
+            Path: /approvals
+            Method: OPTIONS
+        OptionsInvoices:
+          Type: Api
+          Properties:
+            RestApiId: !Ref PipelineApi
+            Path: /invoices
+            Method: OPTIONS
+        OptionsInvoiceDetail:
+          Type: Api
+          Properties:
+            RestApiId: !Ref PipelineApi
+            Path: /invoices/{invoiceId}
+            Method: OPTIONS
+        OptionsExceptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref PipelineApi
+            Path: /exceptions
+            Method: OPTIONS
+        OptionsAudit:
+          Type: Api
+          Properties:
+            RestApiId: !Ref PipelineApi
+            Path: /audit
+            Method: OPTIONS
+        OptionsDashboard:
+          Type: Api
+          Properties:
+            RestApiId: !Ref PipelineApi
+            Path: /dashboard
+            Method: OPTIONS
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: true
+        Target: 'es2022'
+        Sourcemap: true
+        EntryPoints:
+          - handler.ts
+        External:
+          - '@aws-sdk/*'
+
+  # --- Audit Logger Lambda ---
+  AuditLoggerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'audit-logger-${Environment}'
+      Handler: handler.handler
+      CodeUri: ../backend/lambdas/audit-logger/
+      Description: Persists pipeline results and writes audit trail to DynamoDB + S3
+      Timeout: 60
+      MemorySize: 256
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !Ref AuditBucket
+        - DynamoDBCrudPolicy:
+            TableName: !Ref InvoiceTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AuditTable
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: true
+        Target: 'es2022'
+        Sourcemap: true
+        EntryPoints:
+          - handler.ts
+        External:
+          - '@aws-sdk/*'
+
+  # ---------------------------------------------------------------------------
+  # API Gateway
+  # ---------------------------------------------------------------------------
+
+  PipelineApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub 'InvoicePipelineAPI-${Environment}'
+      StageName: !Ref Environment
+      Description: REST API for Invoice Pipeline — frontend and approval callbacks
+      Cors:
+        AllowMethods: "'GET,POST,PUT,DELETE,OPTIONS'"
+        AllowHeaders: "'Content-Type,Authorization,X-Requested-With,X-Filename,X-Invoice-Metadata'"
+        AllowOrigin: "'*'"
+        MaxAge: "'3600'"
+      Tags:
+        Project: aws-invoice-pipeline
+
+  # ---------------------------------------------------------------------------
+  # Step Functions State Machine
+  # ---------------------------------------------------------------------------
+
+  InvoicePipelineStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: !Sub 'InvoicePipelineStateMachine-${Environment}'
+      DefinitionUri: ../backend/step-functions/invoice-pipeline.asl.json
+      DefinitionSubstitutions:
+        TextractProcessorFunctionArn: !GetAtt TextractProcessorFunction.Arn
+        BedrockValidatorFunctionArn: !GetAtt BedrockValidatorFunction.Arn
+        ApprovalHandlerFunctionArn: !GetAtt ApprovalHandlerFunction.Arn
+        AuditLoggerFunctionArn: !GetAtt AuditLoggerFunction.Arn
+        SNSTopicArn: !Ref PipelineNotificationTopic
+        ReviewerEmail: !Ref ReviewerEmail
+      Policies:
+        - LambdaInvokePolicy:
+            FunctionName: !Ref TextractProcessorFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref BedrockValidatorFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref ApprovalHandlerFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref AuditLoggerFunction
+        - SNSPublishMessagePolicy:
+            TopicName: !GetAtt PipelineNotificationTopic.TopicName
+      Tags:
+        Project: aws-invoice-pipeline
+      Type: STANDARD
+
+  # ---------------------------------------------------------------------------
+  # Secrets Manager
+  # ---------------------------------------------------------------------------
+
+  ApiKeysSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub 'invoice-pipeline/api-keys-${Environment}'
+      Description: API keys for the invoice pipeline
+      SecretString: '{"placeholder":"managed-by-iam"}'
+      Tags:
+        - Key: Project
+          Value: aws-invoice-pipeline
+
+# =============================================================================
+# Outputs
+# =============================================================================
+Outputs:
+  ApiEndpoint:
+    Description: API Gateway endpoint URL
+    Value: !Sub 'https://${PipelineApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
+
+  StateMachineArn:
+    Description: Step Functions state machine ARN
+    Value: !Ref InvoicePipelineStateMachine
+
+  RawBucketName:
+    Description: S3 bucket for raw invoice PDFs
+    Value: !Ref RawBucket
+
+  AuditBucketName:
+    Description: S3 bucket for audit trail
+    Value: !Ref AuditBucket
+
+  InvoiceTableName:
+    Description: DynamoDB table for invoice records
+    Value: !Ref InvoiceTable
+
+  AuditTableName:
+    Description: DynamoDB table for audit entries
+    Value: !Ref AuditTable
+
+  SNSTopicArn:
+    Description: SNS topic for pipeline notifications
+    Value: !Ref PipelineNotificationTopic
+
+  InvoiceIngestionFunctionArn:
+    Description: Invoice ingestion Lambda ARN
+    Value: !GetAtt InvoiceIngestionFunction.Arn
+
+  TextractProcessorFunctionArn:
+    Description: Textract processor Lambda ARN
+    Value: !GetAtt TextractProcessorFunction.Arn
+
+  BedrockValidatorFunctionArn:
+    Description: Bedrock validator Lambda ARN
+    Value: !GetAtt BedrockValidatorFunction.Arn
+
+  ApprovalHandlerFunctionArn:
+    Description: Approval handler Lambda ARN
+    Value: !GetAtt ApprovalHandlerFunction.Arn
+
+  AuditLoggerFunctionArn:
+    Description: Audit logger Lambda ARN
+    Value: !GetAtt AuditLoggerFunction.Arn

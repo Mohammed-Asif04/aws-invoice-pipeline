@@ -1,0 +1,186 @@
+{
+  "Comment": "IAM Execution Role for Invoice Pipeline Lambda Functions — Least-Privilege",
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Resources": {
+    "LambdaExecutionRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "RoleName": "InvoicePipelineLambdaRole",
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+        ],
+        "Policies": [
+          {
+            "PolicyName": "InvoicePipelineS3Access",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Sid": "S3RawBucketAccess",
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:GetObject",
+                    "s3:PutObject",
+                    "s3:ListBucket"
+                  ],
+                  "Resource": [
+                    "arn:aws:s3:::invoice-pipeline-raw-*",
+                    "arn:aws:s3:::invoice-pipeline-raw-*/*"
+                  ]
+                },
+                {
+                  "Sid": "S3AuditBucketAccess",
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:GetObject",
+                    "s3:PutObject",
+                    "s3:ListBucket"
+                  ],
+                  "Resource": [
+                    "arn:aws:s3:::invoice-pipeline-audit-*",
+                    "arn:aws:s3:::invoice-pipeline-audit-*/*"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "InvoicePipelineDynamoDBAccess",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "dynamodb:PutItem",
+                    "dynamodb:GetItem",
+                    "dynamodb:UpdateItem",
+                    "dynamodb:DeleteItem",
+                    "dynamodb:Query",
+                    "dynamodb:Scan"
+                  ],
+                  "Resource": [
+                    "arn:aws:s3:::InvoiceRecords*",
+                    "arn:aws:s3:::AuditEntries*"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "InvoicePipelineTextractAccess",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "textract:AnalyzeExpense",
+                    "textract:AnalyzeDocument",
+                    "textract:DetectDocumentText"
+                  ],
+                  "Resource": "*"
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "InvoicePipelineBedrockAccess",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "bedrock:InvokeModel",
+                    "bedrock:InvokeModelWithResponseStream"
+                  ],
+                  "Resource": "arn:aws:bedrock:*::foundation-model/*"
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "InvoicePipelineStepFunctionsAccess",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "states:StartExecution",
+                    "states:SendTaskSuccess",
+                    "states:SendTaskFailure",
+                    "states:SendTaskHeartbeat"
+                  ],
+                  "Resource": "arn:aws:states:*:*:stateMachine:InvoicePipeline*"
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "InvoicePipelineSESAccess",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "ses:SendEmail",
+                    "ses:SendRawEmail"
+                  ],
+                  "Resource": "*"
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "InvoicePipelineSNSAccess",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "sns:Publish"
+                  ],
+                  "Resource": "arn:aws:sns:*:*:InvoicePipelineNotifications*"
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "InvoicePipelineSecretsAccess",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "secretsmanager:GetSecretValue"
+                  ],
+                  "Resource": "arn:aws:secretsmanager:*:*:secret:invoice-pipeline/*"
+                }
+              ]
+            }
+          }
+        ],
+        "Tags": [
+          { "Key": "Project", "Value": "aws-invoice-pipeline" }
+        ]
+      }
+    }
+  }
+}

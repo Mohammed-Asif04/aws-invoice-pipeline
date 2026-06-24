@@ -1,0 +1,111 @@
+{
+  "Comment": "DynamoDB Table Schemas for AWS Invoice Processing Pipeline",
+  "Tables": [
+    {
+      "TableName": "InvoiceRecords",
+      "KeySchema": [
+        { "AttributeName": "invoiceId", "KeyType": "HASH" },
+        { "AttributeName": "vendorId", "KeyType": "RANGE" }
+      ],
+      "AttributeDefinitions": [
+        { "AttributeName": "invoiceId", "AttributeType": "S" },
+        { "AttributeName": "vendorId", "AttributeType": "S" },
+        { "AttributeName": "status", "AttributeType": "S" },
+        { "AttributeName": "invoiceNumber", "AttributeType": "S" },
+        { "AttributeName": "updatedAt", "AttributeType": "S" }
+      ],
+      "GlobalSecondaryIndexes": [
+        {
+          "IndexName": "status-index",
+          "KeySchema": [
+            { "AttributeName": "status", "KeyType": "HASH" },
+            { "AttributeName": "updatedAt", "KeyType": "RANGE" }
+          ],
+          "Projection": { "ProjectionType": "ALL" }
+        },
+        {
+          "IndexName": "invoiceNumber-index",
+          "KeySchema": [
+            { "AttributeName": "invoiceNumber", "KeyType": "HASH" }
+          ],
+          "Projection": { "ProjectionType": "ALL" }
+        }
+      ],
+      "BillingMode": "PAY_PER_REQUEST",
+      "PointInTimeRecovery": true,
+      "SampleItem": {
+        "invoiceId": "INV-2025-A1B2C3D4",
+        "vendorId": "VENDOR-001",
+        "vendorName": "ABC Solutions Ltd.",
+        "vendorAddress": "123 Business Park, Mumbai, Maharashtra 400001",
+        "gstin": "27AABCU9603R1ZM",
+        "invoiceNumber": "ABC-2025-0042",
+        "invoiceDate": "2025-05-18",
+        "dueDate": "2025-06-17",
+        "poNumber": "PO-2025-1234",
+        "lineItems": [
+          {
+            "description": "Cloud Infrastructure Services",
+            "hsnSac": "998314",
+            "quantity": 1,
+            "unitPrice": 100000,
+            "amount": 100000
+          }
+        ],
+        "subtotal": 100000,
+        "cgst": 9000,
+        "sgst": 9000,
+        "totalAmount": 118000,
+        "currency": "INR",
+        "status": "PROCESSED",
+        "extractionConfidence": 95.5,
+        "extractedFields": [],
+        "anomalies": [],
+        "createdAt": "2025-05-18T10:23:00.000Z",
+        "updatedAt": "2025-05-18T10:25:30.000Z",
+        "receivedOn": "2025-05-18T10:23:00.000Z",
+        "s3RawKey": "invoices/INV-2025-A1B2C3D4/invoice.pdf",
+        "source": "EMAIL",
+        "sourceEmail": "vendor@abcsolutions.com"
+      }
+    },
+    {
+      "TableName": "AuditEntries",
+      "KeySchema": [
+        { "AttributeName": "auditId", "KeyType": "HASH" },
+        { "AttributeName": "timestamp", "KeyType": "RANGE" }
+      ],
+      "AttributeDefinitions": [
+        { "AttributeName": "auditId", "AttributeType": "S" },
+        { "AttributeName": "timestamp", "AttributeType": "S" },
+        { "AttributeName": "invoiceId", "AttributeType": "S" }
+      ],
+      "GlobalSecondaryIndexes": [
+        {
+          "IndexName": "invoiceId-index",
+          "KeySchema": [
+            { "AttributeName": "invoiceId", "KeyType": "HASH" },
+            { "AttributeName": "timestamp", "KeyType": "RANGE" }
+          ],
+          "Projection": { "ProjectionType": "ALL" }
+        }
+      ],
+      "BillingMode": "PAY_PER_REQUEST",
+      "PointInTimeRecovery": true,
+      "SampleItem": {
+        "auditId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "invoiceId": "INV-2025-A1B2C3D4",
+        "event": "Document extraction completed",
+        "eventType": "EXTRACTION",
+        "timestamp": "2025-05-18T10:24:15.000Z",
+        "user": "system",
+        "details": "Textract extracted 12 fields, 5 line items. Overall confidence: 95.5%",
+        "metadata": {
+          "fieldsCount": "12",
+          "lineItemsCount": "5",
+          "confidence": "95.5"
+        }
+      }
+    }
+  ]
+}
