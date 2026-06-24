@@ -1,8 +1,9 @@
 // useAuditLogs — Custom hook for audit trail data fetching
 import { useState, useEffect, useCallback } from 'react';
 import type { AuditEntry } from '@/types';
+import { apiClient } from '@/services/api';
 
-// ─── Mock Data ───────────────────────────────────────────────────
+// ─── Mock Data (Fallback) ─────────────────────────────────────────
 
 const mockAuditLogs: AuditEntry[] = [
   {
@@ -23,76 +24,35 @@ const mockAuditLogs: AuditEntry[] = [
     details: 'Claude 3 validated all fields. No anomalies detected. Overall confidence: 92%.',
     metadata: { model: 'anthropic.claude-3-sonnet', anomalies: '0', confidence: '92%' },
   },
-  {
-    id: 'AUD-004', invoiceId: 'INV-2025-1246', event: 'Invoice Approved',
-    eventType: 'approval', timestamp: '2025-05-18T11:20:00Z', user: 'Ananya Sharma',
-    details: 'Invoice approved by Ananya Sharma (Finance Team). No corrections needed.',
-  },
-  {
-    id: 'AUD-005', invoiceId: 'INV-2025-1246', event: 'Persisted to DynamoDB',
-    eventType: 'persistence', timestamp: '2025-05-18T11:20:05Z', user: 'System (Lambda)',
-    details: 'Invoice record written to DynamoDB InvoiceRecords table and audit JSON stored in S3.',
-    metadata: { dynamoKey: 'INV-2025-1246', s3Key: 's3://invoices-audit-bucket-prod/2025/05/18/abc-inv_final.json' },
-  },
-  {
-    id: 'AUD-006', invoiceId: 'INV-2025-1243', event: 'Invoice Ingested via SES',
-    eventType: 'ingestion', timestamp: '2025-05-17T18:31:00Z', user: 'System (SES)',
-    details: 'PDF attachment extracted from inbound email and stored in S3 raw bucket.',
-    metadata: { s3Key: 's3://invoices-raw-bucket-prod/2025/05/17/officeneeds-inv.pdf' },
-  },
-  {
-    id: 'AUD-007', invoiceId: 'INV-2025-1243', event: 'Textract Extraction Completed',
-    eventType: 'extraction', timestamp: '2025-05-17T18:31:14Z', user: 'System (Lambda)',
-    details: 'Amazon Textract processed document. GSTIN field not detected (confidence: 0%).',
-    metadata: { confidence: '78%', missingFields: 'GSTIN' },
-  },
-  {
-    id: 'AUD-008', invoiceId: 'INV-2025-1243', event: 'Bedrock Validation — Exception Flagged',
-    eventType: 'validation', timestamp: '2025-05-17T18:31:22Z', user: 'System (Bedrock)',
-    details: 'Missing GSTIN anomaly detected. Invoice routed to human approval workflow.',
-    metadata: { anomalyType: 'Missing GSTIN', severity: 'HIGH' },
-  },
-  {
-    id: 'AUD-009', invoiceId: 'INV-2025-1239', event: 'Invoice Ingested via SES',
-    eventType: 'ingestion', timestamp: '2025-05-16T14:11:00Z', user: 'System (SES)',
-    details: 'PDF attachment extracted from inbound email.',
-  },
-  {
-    id: 'AUD-010', invoiceId: 'INV-2025-1239', event: 'Bedrock Validation — Exception Flagged',
-    eventType: 'validation', timestamp: '2025-05-16T14:11:30Z', user: 'System (Bedrock)',
-    details: 'Amount Mismatch: line items sum ₹ 45,000.00 ≠ stated total ₹ 45,900.00.',
-    metadata: { anomalyType: 'Amount Mismatch', lineItemsSum: '45000', statedTotal: '45900' },
-  },
-  {
-    id: 'AUD-011', invoiceId: 'INV-2025-1207', event: 'Invoice Ingested via Upload',
-    eventType: 'ingestion', timestamp: '2025-05-14T09:45:00Z', user: 'Rohit Mehta',
-    details: 'Invoice uploaded manually via dashboard UI.',
-  },
-  {
-    id: 'AUD-012', invoiceId: 'INV-2025-1207', event: 'Duplicate Invoice Detected',
-    eventType: 'validation', timestamp: '2025-05-14T09:45:25Z', user: 'System (Bedrock)',
-    details: 'Invoice matches existing record INV-2025-1195 (same vendor, number, amount). Flagged for review.',
-    metadata: { duplicateOf: 'INV-2025-1195', matchedFields: 'vendor, invoiceNumber, amount' },
-  },
-  {
-    id: 'AUD-013', invoiceId: 'INV-2025-1162', event: 'Exception Resolved',
-    eventType: 'approval', timestamp: '2025-05-11T14:30:00Z', user: 'Rohit Mehta',
-    details: 'Missing GSTIN corrected to 29DIGSR5544B1Z9 and invoice approved.',
-    metadata: { correctedField: 'GSTIN', correctedValue: '29DIGSR5544B1Z9' },
-  },
-  {
-    id: 'AUD-014', invoiceId: 'INV-2025-1228', event: 'Reprocess Requested',
-    eventType: 'reprocess', timestamp: '2025-05-15T16:00:00Z', user: 'Priya Nair',
-    details: 'Vendor name corrected to "Global Supplies LLC" and invoice sent for reprocessing.',
-  },
-  {
-    id: 'AUD-015', invoiceId: 'INV-2025-1244', event: 'Invoice Rejected',
-    eventType: 'rejection', timestamp: '2025-05-18T12:00:00Z', user: 'Ananya Sharma',
-    details: 'Invoice rejected: suspected fraudulent document. Referred to compliance team.',
-  },
 ];
 
-// ─── Hook ────────────────────────────────────────────────────────
+// Helper to map backend audit logs to frontend AuditEntry
+function mapBackendAuditToFrontend(audit: any): AuditEntry {
+  const mapType = (type: string): any => {
+    switch (type) {
+      case 'INGESTION': return 'ingestion';
+      case 'EXTRACTION': return 'extraction';
+      case 'VALIDATION': return 'validation';
+      case 'APPROVAL': return 'approval';
+      case 'REJECTION': return 'rejection';
+      case 'REPROCESS': return 'reprocess';
+      case 'PERSISTENCE': return 'persistence';
+      case 'ERROR': return 'rejection';
+      default: return 'ingestion';
+    }
+  };
+
+  return {
+    id: audit.auditId,
+    invoiceId: audit.invoiceId,
+    event: audit.event,
+    eventType: mapType(audit.eventType),
+    timestamp: audit.timestamp,
+    user: audit.user,
+    details: audit.details,
+    metadata: audit.metadata,
+  };
+}
 
 interface AuditLogFilters {
   search?: string;
@@ -120,21 +80,58 @@ interface UseAuditLogsReturn {
   refresh: () => void;
 }
 
-const delay = (ms: number) => new Promise((res) => setTimeout(res, ms));
-
 async function fetchAuditLogs(filters: AuditLogFilters): Promise<AuditEntry[]> {
-  // When API is ready: return apiClient.get('/audit-logs', filters);
-  await delay(250);
-  return mockAuditLogs.filter((log) => {
-    const matchesSearch = !filters.search ||
-      log.invoiceId.toLowerCase().includes(filters.search.toLowerCase()) ||
-      log.event.toLowerCase().includes(filters.search.toLowerCase()) ||
-      log.details.toLowerCase().includes(filters.search.toLowerCase()) ||
-      log.user.toLowerCase().includes(filters.search.toLowerCase());
-    const matchesType = !filters.eventType || filters.eventType === 'All' || log.eventType === filters.eventType;
-    const matchesInvoice = !filters.invoiceId || log.invoiceId === filters.invoiceId;
-    return matchesSearch && matchesType && matchesInvoice;
-  });
+  if (!import.meta.env.VITE_API_BASE_URL) {
+    // Return mock data
+    return mockAuditLogs.filter((log) => {
+      const matchesSearch = !filters.search ||
+        log.invoiceId.toLowerCase().includes(filters.search.toLowerCase()) ||
+        log.event.toLowerCase().includes(filters.search.toLowerCase()) ||
+        log.details.toLowerCase().includes(filters.search.toLowerCase()) ||
+        log.user.toLowerCase().includes(filters.search.toLowerCase());
+      const matchesType = !filters.eventType || filters.eventType === 'All' || log.eventType === filters.eventType;
+      const matchesInvoice = !filters.invoiceId || log.invoiceId === filters.invoiceId;
+      return matchesSearch && matchesType && matchesInvoice;
+    });
+  }
+
+  // Real API calls
+  if (filters.invoiceId) {
+    // Get logs for specific invoice: GET /audit?invoiceId=xxx
+    const response = await apiClient.get<{ entries: any[] }>('/audit', { invoiceId: filters.invoiceId });
+    return (response.entries || []).map(mapBackendAuditToFrontend);
+  } else {
+    // Combine logs of recent invoices
+    const invoicesResponse = await apiClient.get<{ items: any[] }>('/invoices', { pageSize: '20' });
+    const invoices = invoicesResponse.items || [];
+    
+    // Fetch detail and audit logs in parallel
+    const details = await Promise.all(
+      invoices.map(async (inv) => {
+        try {
+          const detail = await apiClient.get<{ invoice: any; auditLogs: any[] }>(`/invoices/${inv.invoiceId}`);
+          return detail.auditLogs || [];
+        } catch {
+          return [];
+        }
+      })
+    );
+    
+    // Flatten and sort by timestamp desc
+    const allLogs = details.flat().map(mapBackendAuditToFrontend);
+    allLogs.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    
+    // Apply filters
+    return allLogs.filter((log) => {
+      const matchesSearch = !filters.search ||
+        log.invoiceId.toLowerCase().includes(filters.search.toLowerCase()) ||
+        log.event.toLowerCase().includes(filters.search.toLowerCase()) ||
+        log.details.toLowerCase().includes(filters.search.toLowerCase()) ||
+        log.user.toLowerCase().includes(filters.search.toLowerCase());
+      const matchesType = !filters.eventType || filters.eventType === 'All' || log.eventType === filters.eventType;
+      return matchesSearch && matchesType;
+    });
+  }
 }
 
 export function useAuditLogs(invoiceId?: string): UseAuditLogsReturn {

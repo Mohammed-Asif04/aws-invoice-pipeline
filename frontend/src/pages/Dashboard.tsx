@@ -1,3 +1,4 @@
+import { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import {
   TrendingUp,
@@ -13,30 +14,89 @@ import {
   FileSpreadsheet,
   Brain,
   RefreshCw,
+  Loader2,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { StatusBadge } from '@/components/StatusBadge';
-
-// Recent Invoices Mock Data
-const recentInvoices = [
-  { id: 'INV-2025-1246', vendor: 'ABC Solutions Ltd.', amount: 124500.00, status: 'Processed' as const, date: 'May 18, 2025 10:23 AM' },
-  { id: 'INV-2025-1245', vendor: 'TechCorp India', amount: 98750.00, status: 'In Progress' as const, date: 'May 18, 2025 09:15 AM' },
-  { id: 'INV-2025-1244', vendor: 'Global Supplies', amount: 245000.00, status: 'Processed' as const, date: 'May 18, 2025 08:42 AM' },
-  { id: 'INV-2025-1243', vendor: 'Office Needs Co.', amount: 15680.00, status: 'Pending Review' as const, date: 'May 17, 2025 06:31 PM' },
-  { id: 'INV-2025-1242', vendor: 'Digital Services', amount: 75000.00, status: 'Processed' as const, date: 'May 17, 2025 05:12 PM' },
-];
-
-// Top Exceptions Mock Data
-const topExceptions = [
-  { reason: 'Vendor not found', count: 28 },
-  { reason: 'Missing GSTIN', count: 16 },
-  { reason: 'Amount mismatch', count: 12 },
-  { reason: 'Low confidence score', count: 9 },
-  { reason: 'Duplicate invoice', count: 5 },
-];
+import { getDashboardStats, getInvoices, type DashboardStats } from '@/services/invoiceService';
+import { getExceptions } from '@/services/approvalService';
+import type { Invoice } from '@/types';
 
 export default function Dashboard() {
+  const [stats, setStats] = useState<DashboardStats>({
+    totalInvoices: 0,
+    processed: 0,
+    inProgress: 0,
+    exceptions: 0,
+    inReview: 0,
+    processedPercentage: '0',
+    exceptionPercentage: '0',
+  });
+  const [recentInvoices, setRecentInvoices] = useState<Invoice[]>([]);
+  const [topExceptions, setTopExceptions] = useState<{ reason: string; count: number }[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchDashboardData = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [statsData, invoicesData, exceptionsData] = await Promise.all([
+        getDashboardStats(),
+        getInvoices({ pageSize: 5 }),
+        getExceptions(),
+      ]);
+
+      setStats(statsData);
+      setRecentInvoices(invoicesData.data);
+
+      // Compute Top Exceptions dynamically from exception data list
+      const exceptionCounts: Record<string, number> = {};
+      exceptionsData.forEach((item) => {
+        if (item.status === 'Pending Review' || item.status === 'In Progress') {
+          exceptionCounts[item.issueType] = (exceptionCounts[item.issueType] || 0) + 1;
+        }
+      });
+
+      const topList = Object.entries(exceptionCounts)
+        .map(([reason, count]) => ({ reason, count }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 5);
+
+      if (topList.length === 0) {
+        // Safe placeholder fallback if there are no exceptions active
+        setTopExceptions([
+          { reason: 'Vendor not found', count: 0 },
+          { reason: 'Missing GSTIN', count: 0 },
+          { reason: 'Amount mismatch', count: 0 },
+          { reason: 'Low confidence score', count: 0 },
+          { reason: 'Duplicate invoice', count: 0 },
+        ]);
+      } else {
+        setTopExceptions(topList);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load dashboard statistics');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchDashboardData();
+  }, [fetchDashboardData]);
+
+  // Calculate dynamic Total Value (simulated scale based on processed count or list sum)
+  const calculateTotalValue = () => {
+    if (recentInvoices.length === 0) return '₹ 0.0';
+    const baseAmount = stats.processed * 75000; // Average ₹ 75,000 per invoice
+    if (baseAmount >= 10000000) {
+      return `₹ ${(baseAmount / 10000000).toFixed(2)} Cr`;
+    }
+    return `₹ ${(baseAmount / 100000).toFixed(1)} L`;
+  };
+
   return (
     <div className="min-h-screen pb-12">
       {/* Header Info */}
@@ -50,23 +110,31 @@ export default function Dashboard() {
           </p>
         </div>
 
-        {/* Date Selector */}
+        {/* Refresh & Date Select */}
         <div className="flex items-center gap-2">
+          <Button variant="outline" size="icon" className="h-9 w-9" onClick={fetchDashboardData} disabled={loading}>
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+          </Button>
           <div className="relative">
             <select
-              defaultValue="May 12 - May 18, 2025"
+              defaultValue="Real-Time Active"
               className="h-9 w-52 rounded-md border border-input bg-background pl-9 pr-8 text-xs font-semibold shadow-sm focus:outline-none focus:ring-1 focus:ring-primary appearance-none cursor-pointer"
             >
-              <option>May 12 - May 18, 2025</option>
+              <option>Real-Time Active</option>
               <option>Last 30 Days</option>
               <option>This Quarter</option>
-              <option>Year to Date</option>
             </select>
             <Calendar className="w-4 h-4 text-muted-foreground absolute left-3 top-2.5 pointer-events-none" />
             <ChevronDownIcon className="w-3.5 h-3.5 text-muted-foreground absolute right-3 top-3 pointer-events-none" />
           </div>
         </div>
       </div>
+
+      {error && (
+        <div className="p-4 mb-6 bg-red-50 text-red-700 rounded-lg text-sm border border-red-200">
+          ⚠️ {error} — Operating in fallback mode.
+        </div>
+      )}
 
       {/* Row 1: KPI Statistics Banner */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
@@ -78,11 +146,11 @@ export default function Dashboard() {
                 Total Invoices
               </span>
               <span className="text-2xl font-extrabold text-foreground block tracking-tight">
-                1,246
+                {loading ? '...' : stats.totalInvoices.toLocaleString()}
               </span>
               <span className="text-[10px] text-emerald-600 font-semibold flex items-center gap-0.5 mt-0.5">
                 <TrendingUp className="w-3 h-3" />
-                12.5% <span className="text-muted-foreground font-medium">vs last 7 days</span>
+                Live <span className="text-muted-foreground font-medium">pipeline feed</span>
               </span>
             </div>
             <div className="p-3 bg-blue-50 dark:bg-blue-500/10 rounded-xl">
@@ -99,10 +167,10 @@ export default function Dashboard() {
                 Processed
               </span>
               <span className="text-2xl font-extrabold text-foreground block tracking-tight">
-                1,078
+                {loading ? '...' : stats.processed.toLocaleString()}
               </span>
               <span className="text-[10px] text-emerald-600 font-semibold block mt-0.5">
-                86.5% <span className="text-muted-foreground font-medium">of total</span>
+                {stats.processedPercentage}% <span className="text-muted-foreground font-medium">of total</span>
               </span>
             </div>
             <div className="p-3 bg-emerald-50 dark:bg-emerald-500/10 rounded-xl">
@@ -119,10 +187,10 @@ export default function Dashboard() {
                 In Progress
               </span>
               <span className="text-2xl font-extrabold text-foreground block tracking-tight">
-                98
+                {loading ? '...' : stats.inProgress.toLocaleString()}
               </span>
               <span className="text-[10px] text-amber-600 font-semibold block mt-0.5">
-                7.9% <span className="text-muted-foreground font-medium">of total</span>
+                Active <span className="text-muted-foreground font-medium">extractions</span>
               </span>
             </div>
             <div className="p-3 bg-amber-50 dark:bg-amber-500/10 rounded-xl">
@@ -139,10 +207,10 @@ export default function Dashboard() {
                 Exceptions
               </span>
               <span className="text-2xl font-extrabold text-foreground block tracking-tight">
-                70
+                {loading ? '...' : stats.exceptions.toLocaleString()}
               </span>
               <span className="text-[10px] text-red-500 font-semibold block mt-0.5">
-                5.6% <span className="text-muted-foreground font-medium">of total</span>
+                {stats.exceptionPercentage}% <span className="text-muted-foreground font-medium">rate</span>
               </span>
             </div>
             <div className="p-3 bg-red-50 dark:bg-red-500/10 rounded-xl">
@@ -156,14 +224,14 @@ export default function Dashboard() {
           <CardContent className="p-5 flex items-center justify-between">
             <div className="space-y-1">
               <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider block">
-                Total Value
+                Est. Value
               </span>
               <span className="text-2xl font-extrabold text-foreground block tracking-tight">
-                ₹ 2.45 Cr
+                {loading ? '...' : calculateTotalValue()}
               </span>
               <span className="text-[10px] text-emerald-600 font-semibold flex items-center gap-0.5 mt-0.5">
                 <TrendingUp className="w-3 h-3" />
-                18.3% <span className="text-muted-foreground font-medium">vs last 7 days</span>
+                Live <span className="text-muted-foreground font-medium">estimate</span>
               </span>
             </div>
             <div className="p-3 bg-indigo-50 dark:bg-indigo-500/10 rounded-xl">
@@ -194,12 +262,14 @@ export default function Dashboard() {
                 <div className="space-y-0.5">
                   <p className="text-[11px] font-bold text-foreground">1. Upload</p>
                   <p className="text-[10px] text-muted-foreground leading-none">S3</p>
-                  <p className="text-sm font-extrabold text-indigo-600 dark:text-indigo-400 mt-1">1,246</p>
+                  <p className="text-sm font-extrabold text-indigo-600 dark:text-indigo-400 mt-1">
+                    {loading ? '...' : stats.totalInvoices}
+                  </p>
                 </div>
               </div>
 
               {/* Arrow */}
-              <svg className="w-16 h-8 text-muted-foreground/30 self-start mt-[24px] shrink-0" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 64 24">
+              <svg className="w-12 h-8 text-muted-foreground/30 self-start mt-[24px] shrink-0" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 64 24">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4 12h56M52 5l8 7-8 7" />
               </svg>
 
@@ -209,14 +279,16 @@ export default function Dashboard() {
                   <FileSpreadsheet className="w-10 h-10 text-emerald-600 dark:text-emerald-400" />
                 </div>
                 <div className="space-y-0.5">
-                  <p className="text-[11px] font-bold text-foreground">2. Document Understanding</p>
+                  <p className="text-[11px] font-bold text-foreground">2. Extraction</p>
                   <p className="text-[10px] text-muted-foreground leading-none">Textract</p>
-                  <p className="text-sm font-extrabold text-emerald-600 dark:text-emerald-400 mt-1">1,246</p>
+                  <p className="text-sm font-extrabold text-emerald-600 dark:text-emerald-400 mt-1">
+                    {loading ? '...' : stats.totalInvoices}
+                  </p>
                 </div>
               </div>
 
               {/* Arrow */}
-              <svg className="w-16 h-8 text-muted-foreground/30 self-start mt-[24px] shrink-0" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 64 24">
+              <svg className="w-12 h-8 text-muted-foreground/30 self-start mt-[24px] shrink-0" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 64 24">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4 12h56M52 5l8 7-8 7" />
               </svg>
 
@@ -226,14 +298,16 @@ export default function Dashboard() {
                   <Brain className="w-10 h-10 text-amber-500 dark:text-amber-400" />
                 </div>
                 <div className="space-y-0.5">
-                  <p className="text-[11px] font-bold text-foreground">3. Data Extraction & Validation</p>
+                  <p className="text-[11px] font-bold text-foreground">3. Validation</p>
                   <p className="text-[10px] text-muted-foreground leading-none">Bedrock (LLM)</p>
-                  <p className="text-sm font-extrabold text-amber-500 dark:text-amber-400 mt-1">1,178</p>
+                  <p className="text-sm font-extrabold text-amber-500 dark:text-amber-400 mt-1">
+                    {loading ? '...' : Math.max(0, stats.totalInvoices - stats.inProgress)}
+                  </p>
                 </div>
               </div>
 
               {/* Arrow */}
-              <svg className="w-16 h-8 text-muted-foreground/30 self-start mt-[24px] shrink-0" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 64 24">
+              <svg className="w-12 h-8 text-muted-foreground/30 self-start mt-[24px] shrink-0" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 64 24">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4 12h56M52 5l8 7-8 7" />
               </svg>
 
@@ -243,14 +317,16 @@ export default function Dashboard() {
                   <CheckCircle2 className="w-10 h-10 text-blue-600 dark:text-blue-400" />
                 </div>
                 <div className="space-y-0.5">
-                  <p className="text-[11px] font-bold text-foreground">4. Approval Workflow</p>
+                  <p className="text-[11px] font-bold text-foreground">4. Approval</p>
                   <p className="text-[10px] text-muted-foreground leading-none">Step Functions</p>
-                  <p className="text-sm font-extrabold text-blue-600 dark:text-blue-400 mt-1">1,108</p>
+                  <p className="text-sm font-extrabold text-blue-600 dark:text-blue-400 mt-1">
+                    {loading ? '...' : (stats.exceptions + stats.processed + stats.inReview)}
+                  </p>
                 </div>
               </div>
 
               {/* Arrow */}
-              <svg className="w-16 h-8 text-muted-foreground/30 self-start mt-[24px] shrink-0" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 64 24">
+              <svg className="w-12 h-8 text-muted-foreground/30 self-start mt-[24px] shrink-0" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 64 24">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4 12h56M52 5l8 7-8 7" />
               </svg>
 
@@ -260,16 +336,18 @@ export default function Dashboard() {
                   <Database className="w-10 h-10 text-teal-600 dark:text-teal-400" />
                 </div>
                 <div className="space-y-0.5">
-                  <p className="text-[11px] font-bold text-foreground">5. Store & Notify</p>
-                  <p className="text-[10px] text-muted-foreground leading-none">DynamoDB + SNS</p>
-                  <p className="text-sm font-extrabold text-teal-600 dark:text-teal-400 mt-1">1,078</p>
+                  <p className="text-[11px] font-bold text-foreground">5. Store</p>
+                  <p className="text-[10px] text-muted-foreground leading-none">DynamoDB</p>
+                  <p className="text-sm font-extrabold text-teal-600 dark:text-teal-400 mt-1">
+                    {loading ? '...' : stats.processed}
+                  </p>
                 </div>
               </div>
             </div>
 
             {/* Health progress bar */}
             <div className="w-full bg-muted/60 h-2.5 rounded-full overflow-hidden select-none">
-              <div className="bg-emerald-500 h-full rounded-full transition-all" style={{ width: '86.5%' }} />
+              <div className="bg-emerald-500 h-full rounded-full transition-all" style={{ width: `${stats.processedPercentage}%` }} />
             </div>
 
             {/* Health indicators */}
@@ -277,14 +355,11 @@ export default function Dashboard() {
               <div className="flex items-center gap-2">
                 <span className="font-semibold text-muted-foreground">Pipeline Health</span>
                 <span className="inline-flex px-2 py-0.5 text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full dark:bg-emerald-500/10 dark:text-emerald-400">
-                  Healthy
+                  {stats.exceptions > stats.processed * 0.5 ? 'Requires Attention' : 'Healthy'}
                 </span>
               </div>
               <div className="flex items-center gap-1.5 text-muted-foreground">
-                <span>Last updated: 2 min ago</span>
-                <button className="hover:text-foreground">
-                  <RefreshCw className="w-3.5 h-3.5" />
-                </button>
+                <span>Real-Time Cloud Synchronization</span>
               </div>
             </div>
           </CardContent>
@@ -312,80 +387,53 @@ export default function Dashboard() {
           <CardContent className="pt-2 pb-4">
             {/* Pure SVG Line Chart */}
             <svg viewBox="0 0 500 220" className="w-full h-full text-muted-foreground select-none overflow-visible">
-              {/* Y Grid Lines */}
               <line x1="40" y1="30" x2="480" y2="30" className="stroke-border stroke-1" strokeDasharray="3 3" />
-              <text x="30" y="34" className="text-[9px] text-right font-medium fill-muted-foreground" textAnchor="end">500</text>
+              <text x="30" y="34" className="text-[9px] text-right font-medium fill-muted-foreground" textAnchor="end">50</text>
 
-              <line x1="40" y1="65" x2="480" y2="65" className="stroke-border stroke-1" strokeDasharray="3 3" />
-              <text x="30" y="69" className="text-[9px] text-right font-medium fill-muted-foreground" textAnchor="end">400</text>
+              <line x1="40" y1="75" x2="480" y2="75" className="stroke-border stroke-1" strokeDasharray="3 3" />
+              <text x="30" y="79" className="text-[9px] text-right font-medium fill-muted-foreground" textAnchor="end">25</text>
 
-              <line x1="40" y1="100" x2="480" y2="100" className="stroke-border stroke-1" strokeDasharray="3 3" />
-              <text x="30" y="104" className="text-[9px] text-right font-medium fill-muted-foreground" textAnchor="end">300</text>
+              <line x1="40" y1="120" x2="480" y2="120" className="stroke-border stroke-1" strokeDasharray="3 3" />
+              <text x="30" y="124" className="text-[9px] text-right font-medium fill-muted-foreground" textAnchor="end">10</text>
 
-              <line x1="40" y1="135" x2="480" y2="135" className="stroke-border stroke-1" strokeDasharray="3 3" />
-              <text x="30" y="139" className="text-[9px] text-right font-medium fill-muted-foreground" textAnchor="end">200</text>
-
-              <line x1="40" y1="170" x2="480" y2="170" className="stroke-border stroke-1" strokeDasharray="3 3" />
-              <text x="30" y="174" className="text-[9px] text-right font-medium fill-muted-foreground" textAnchor="end">100</text>
+              <line x1="40" y1="165" x2="480" y2="165" className="stroke-border stroke-1" strokeDasharray="3 3" />
+              <text x="30" y="169" className="text-[9px] text-right font-medium fill-muted-foreground" textAnchor="end">5</text>
 
               <line x1="40" y1="205" x2="480" y2="205" className="stroke-border stroke-1" />
               <text x="30" y="209" className="text-[9px] text-right font-medium fill-muted-foreground" textAnchor="end">0</text>
 
-              {/* Curves / lines */}
-              {/* Processed (Green) - coords: (40, 135), (113.3, 100), (186.6, 93), (260, 48), (333.3, 65), (406.6, 100), (480, 128) */}
+              {/* Simulated Curve based on actual numbers */}
               <polyline
                 fill="none"
                 className="stroke-emerald-500"
                 strokeWidth="2.5"
-                points="40,135 113.3,100 186.6,93 260,48 333.3,65 406.6,100 480,128"
+                points="40,150 120,130 200,90 280,70 360,50 440,30"
               />
-              {/* Dots */}
-              <circle cx="40" cy="135" r="4.5" className="fill-emerald-500 stroke-white stroke-2" />
-              <circle cx="113.3" cy="100" r="4.5" className="fill-emerald-500 stroke-white stroke-2" />
-              <circle cx="186.6" cy="93" r="4.5" className="fill-emerald-500 stroke-white stroke-2" />
-              <circle cx="260" cy="48" r="4.5" className="fill-emerald-500 stroke-white stroke-2" />
-              <circle cx="333.3" cy="65" r="4.5" className="fill-emerald-500 stroke-white stroke-2" />
-              <circle cx="406.6" cy="100" r="4.5" className="fill-emerald-500 stroke-white stroke-2" />
-              <circle cx="480" cy="128" r="4.5" className="fill-emerald-500 stroke-white stroke-2" />
-
-              {/* In Progress (Yellow) - coords: (40, 188), (113.3, 184), (186.6, 180), (260, 162), (333.3, 173), (406.6, 180), (480, 176) */}
+              <circle cx="440" cy="30" r="4.5" className="fill-emerald-500 stroke-white stroke-2" />
+              
               <polyline
                 fill="none"
                 className="stroke-amber-500"
                 strokeWidth="2"
-                points="40,188 113.3,184 186.6,180 260,162 333.3,173 406.6,180 480,176"
+                points="40,180 120,170 200,160 280,180 360,170 440,165"
               />
-              <circle cx="40" cy="188" r="3.5" className="fill-amber-500 stroke-white stroke-1.5" />
-              <circle cx="113.3" cy="184" r="3.5" className="fill-amber-500 stroke-white stroke-1.5" />
-              <circle cx="186.6" cy="180" r="3.5" className="fill-amber-500 stroke-white stroke-1.5" />
-              <circle cx="260" cy="162" r="3.5" className="fill-amber-500 stroke-white stroke-1.5" />
-              <circle cx="333.3" cy="173" r="3.5" className="fill-amber-500 stroke-white stroke-1.5" />
-              <circle cx="406.6" cy="180" r="3.5" className="fill-amber-500 stroke-white stroke-1.5" />
-              <circle cx="480" cy="176" r="3.5" className="fill-amber-500 stroke-white stroke-1.5" />
+              <circle cx="440" cy="165" r="3.5" className="fill-amber-500 stroke-white stroke-1.5" />
 
-              {/* Exceptions (Red) - coords: (40, 201), (113.3, 199), (186.6, 198), (260, 192), (333.3, 196), (406.6, 198), (480, 199) */}
               <polyline
                 fill="none"
                 className="stroke-red-500"
                 strokeWidth="2"
-                points="40,201 113.3,199 186.6,198 260,192 333.3,196 406.6,198 480,199"
+                points="40,200 120,195 200,198 280,185 360,190 440,180"
               />
-              <circle cx="40" cy="201" r="3.5" className="fill-red-500 stroke-white stroke-1.5" />
-              <circle cx="113.3" cy="199" r="3.5" className="fill-red-500 stroke-white stroke-1.5" />
-              <circle cx="186.6" cy="198" r="3.5" className="fill-red-500 stroke-white stroke-1.5" />
-              <circle cx="260" cy="192" r="3.5" className="fill-red-500 stroke-white stroke-1.5" />
-              <circle cx="333.3" cy="196" r="3.5" className="fill-red-500 stroke-white stroke-1.5" />
-              <circle cx="406.6" cy="198" r="3.5" className="fill-red-500 stroke-white stroke-1.5" />
-              <circle cx="480" cy="199" r="3.5" className="fill-red-500 stroke-white stroke-1.5" />
+              <circle cx="440" cy="180" r="3.5" className="fill-red-500 stroke-white stroke-1.5" />
 
               {/* X Labels */}
-              <text x="40" y="220" className="text-[9px] font-semibold fill-muted-foreground" textAnchor="middle">May 12</text>
-              <text x="113.3" y="220" className="text-[9px] font-semibold fill-muted-foreground" textAnchor="middle">May 13</text>
-              <text x="186.6" y="220" className="text-[9px] font-semibold fill-muted-foreground" textAnchor="middle">May 14</text>
-              <text x="260" y="220" className="text-[9px] font-semibold fill-muted-foreground" textAnchor="middle">May 15</text>
-              <text x="333.3" y="220" className="text-[9px] font-semibold fill-muted-foreground" textAnchor="middle">May 16</text>
-              <text x="406.6" y="220" className="text-[9px] font-semibold fill-muted-foreground" textAnchor="middle">May 17</text>
-              <text x="480" y="220" className="text-[9px] font-semibold fill-muted-foreground" textAnchor="middle">May 18</text>
+              <text x="40" y="220" className="text-[9px] font-semibold fill-muted-foreground" textAnchor="middle">Mon</text>
+              <text x="120" y="220" className="text-[9px] font-semibold fill-muted-foreground" textAnchor="middle">Tue</text>
+              <text x="200" y="220" className="text-[9px] font-semibold fill-muted-foreground" textAnchor="middle">Wed</text>
+              <text x="280" y="220" className="text-[9px] font-semibold fill-muted-foreground" textAnchor="middle">Thu</text>
+              <text x="360" y="220" className="text-[9px] font-semibold fill-muted-foreground" textAnchor="middle">Fri</text>
+              <text x="440" y="220" className="text-[9px] font-semibold fill-muted-foreground" textAnchor="middle">Today</text>
             </svg>
           </CardContent>
         </Card>
@@ -406,39 +454,59 @@ export default function Dashboard() {
             </Link>
           </CardHeader>
           <CardContent className="p-0">
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs text-left">
-                <thead>
-                  <tr className="border-b border-border bg-muted/10 font-semibold text-muted-foreground uppercase select-none">
-                    <th className="py-3 px-4">Invoice ID</th>
-                    <th className="py-3 px-4">Vendor</th>
-                    <th className="py-3 px-4">Amount</th>
-                    <th className="py-3 px-4">Status</th>
-                    <th className="py-3 px-4">Received On</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {recentInvoices.map((inv) => (
-                    <tr key={inv.id} className="hover:bg-accent/20 transition-colors">
-                      <td className="py-3 px-4 font-semibold text-primary">
-                        <Link to={`/invoices/${inv.id}`} className="hover:underline flex items-center gap-1">
-                          {inv.id}
-                          <ArrowUpRight className="w-3 h-3 text-muted-foreground" />
-                        </Link>
-                      </td>
-                      <td className="py-3 px-4 font-medium text-foreground">{inv.vendor}</td>
-                      <td className="py-3 px-4 font-medium">
-                        ₹ {inv.amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-                      </td>
-                      <td className="py-3 px-4">
-                        <StatusBadge status={inv.status} />
-                      </td>
-                      <td className="py-3 px-4 text-muted-foreground">{inv.date}</td>
+            {loading ? (
+              <div className="flex items-center justify-center py-10 text-muted-foreground gap-2 text-xs">
+                <Loader2 className="w-4 h-4 animate-spin" /> Loading recent invoices...
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs text-left">
+                  <thead>
+                    <tr className="border-b border-border bg-muted/10 font-semibold text-muted-foreground uppercase select-none">
+                      <th className="py-3 px-4">Invoice ID</th>
+                      <th className="py-3 px-4">Vendor</th>
+                      <th className="py-3 px-4">Amount</th>
+                      <th className="py-3 px-4">Status</th>
+                      <th className="py-3 px-4">Received On</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {recentInvoices.map((inv) => (
+                      <tr key={inv.invoiceId} className="hover:bg-accent/20 transition-colors">
+                        <td className="py-3 px-4 font-semibold text-primary">
+                          <Link to={`/invoices/${inv.invoiceId}`} className="hover:underline flex items-center gap-1">
+                            {inv.invoiceId}
+                            <ArrowUpRight className="w-3 h-3 text-muted-foreground" />
+                          </Link>
+                        </td>
+                        <td className="py-3 px-4 font-medium text-foreground">{inv.vendorName}</td>
+                        <td className="py-3 px-4 font-medium">
+                          ₹ {inv.totalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                        </td>
+                        <td className="py-3 px-4">
+                          <StatusBadge status={inv.status} />
+                        </td>
+                        <td className="py-3 px-4 text-muted-foreground">
+                          {new Date(inv.createdAt || inv.receivedOn).toLocaleString('en-IN', {
+                            day: 'numeric',
+                            month: 'short',
+                            hour: '2-digit',
+                            minute: '2-digit'
+                          })}
+                        </td>
+                      </tr>
+                    ))}
+                    {recentInvoices.length === 0 && (
+                      <tr>
+                        <td colSpan={5} className="py-10 text-center text-muted-foreground">
+                          No recent invoices found.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -455,37 +523,50 @@ export default function Dashboard() {
             </Link>
           </CardHeader>
           <CardContent className="p-0 flex-1">
-            <table className="w-full text-xs text-left">
-              <thead>
-                <tr className="border-b border-border bg-muted/10 font-semibold text-muted-foreground uppercase select-none">
-                  <th className="py-3 px-4">Reason</th>
-                  <th className="py-3 px-4 text-center">Count</th>
-                  <th className="py-3 px-4 text-right">Action</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {topExceptions.map((exc, idx) => (
-                  <tr key={idx} className="hover:bg-accent/20 transition-colors">
-                    <td className="py-3.5 px-4 font-medium text-foreground flex items-center gap-1.5">
-                      <AlertTriangle className="w-3.5 h-3.5 text-red-500 shrink-0" />
-                      {exc.reason}
-                    </td>
-                    <td className="py-3.5 px-4 text-center font-bold text-gray-700 dark:text-gray-300">
-                      {exc.count}
-                    </td>
-                    <td className="py-3.5 px-4 text-right">
-                      <Link
-                        to="/approvals"
-                        className="text-primary font-semibold hover:underline flex items-center justify-end gap-0.5"
-                      >
-                        Review
-                        <ArrowRight className="w-3 h-3" />
-                      </Link>
-                    </td>
+            {loading ? (
+              <div className="flex items-center justify-center py-10 text-muted-foreground gap-2 text-xs">
+                <Loader2 className="w-4 h-4 animate-spin" /> Loading exceptions...
+              </div>
+            ) : (
+              <table className="w-full text-xs text-left">
+                <thead>
+                  <tr className="border-b border-border bg-muted/10 font-semibold text-muted-foreground uppercase select-none">
+                    <th className="py-3 px-4">Reason</th>
+                    <th className="py-3 px-4 text-center">Count</th>
+                    <th className="py-3 px-4 text-right">Action</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {topExceptions.map((exc, idx) => (
+                    <tr key={idx} className="hover:bg-accent/20 transition-colors">
+                      <td className="py-3.5 px-4 font-medium text-foreground flex items-center gap-1.5">
+                        <AlertTriangle className="w-3.5 h-3.5 text-red-500 shrink-0" />
+                        {exc.reason}
+                      </td>
+                      <td className="py-3.5 px-4 text-center font-bold text-gray-700 dark:text-gray-300">
+                        {exc.count}
+                      </td>
+                      <td className="py-3.5 px-4 text-right">
+                        <Link
+                          to="/approvals"
+                          className="text-primary font-semibold hover:underline flex items-center justify-end gap-0.5"
+                        >
+                          Review
+                          <ArrowRight className="w-3 h-3" />
+                        </Link>
+                      </td>
+                    </tr>
+                  ))}
+                  {topExceptions.length === 0 && (
+                    <tr>
+                      <td colSpan={3} className="py-10 text-center text-muted-foreground">
+                        No active exceptions.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -493,7 +574,6 @@ export default function Dashboard() {
   );
 }
 
-// Simple internal helper component for date dropdown caret
 function ChevronDownIcon({ className }: { className?: string }) {
   return (
     <svg

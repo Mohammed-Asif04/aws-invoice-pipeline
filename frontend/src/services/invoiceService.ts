@@ -1,10 +1,36 @@
 // Invoice Service — CRUD operations for invoices
-// Currently uses mock data; swap to apiClient when backend is ready
+// Call API endpoints if VITE_API_BASE_URL is configured, else fall back to mocks
 
 import type { Invoice, InvoiceStatus } from '@/types';
-// import { apiClient } from './api';  // Uncomment when API is ready
+import { apiClient } from './api';
 
-// ─── Mock Data ───────────────────────────────────────────────────
+// Map UI statuses to backend statuses
+export function mapUIStatusToBackend(status: string): string {
+  switch (status) {
+    case 'Processed': return 'PROCESSED';
+    case 'In Progress': return 'IN_PROGRESS';
+    case 'In Review': return 'IN_REVIEW';
+    case 'Pending Review': return 'IN_REVIEW';
+    case 'Exception': return 'EXCEPTION';
+    case 'Resolved': return 'RESOLVED';
+    default: return status.toUpperCase();
+  }
+}
+
+// Map backend statuses to UI statuses
+export function mapBackendStatusToUI(status: string): InvoiceStatus {
+  switch (status) {
+    case 'PROCESSED': return 'Processed';
+    case 'IN_PROGRESS': return 'In Progress';
+    case 'IN_REVIEW': return 'In Review';
+    case 'PENDING_REVIEW': return 'Pending Review';
+    case 'EXCEPTION': return 'Exception';
+    case 'RESOLVED': return 'Resolved';
+    default: return 'In Progress';
+  }
+}
+
+// ─── Mock Data (Fallback) ─────────────────────────────────────────
 
 const mockInvoicesRaw = [
   {
@@ -72,27 +98,6 @@ const mockInvoicesRaw = [
     lineItems: [], subtotal: 27500.00, cgst: 2475.00, sgst: 2475.00,
     anomalies: [], createdAt: '2025-05-16T13:43:00Z', invoiceNumber: 'INV-2025-1238',
   },
-  {
-    invoiceId: 'INV-2025-1237', vendorName: 'ABC Solutions Ltd.', invoiceDate: '2025-05-15',
-    totalAmount: 85000.00, currency: 'INR', status: 'Processed' as InvoiceStatus,
-    receivedOn: '2025-05-15T11:20:00Z', extractionConfidence: 97,
-    lineItems: [], subtotal: 72033.90, cgst: 6483.05, sgst: 6483.05,
-    anomalies: [], createdAt: '2025-05-15T11:20:00Z', invoiceNumber: 'INV-2025-1237',
-  },
-  {
-    invoiceId: 'INV-2025-1236', vendorName: 'BufferOn Pvt. Ltd.', invoiceDate: '2025-05-15',
-    totalAmount: 45000.00, currency: 'INR', status: 'Processed' as InvoiceStatus,
-    receivedOn: '2025-05-15T10:02:00Z', extractionConfidence: 95,
-    lineItems: [], subtotal: 38135.59, cgst: 3432.20, sgst: 3432.20,
-    anomalies: [], createdAt: '2025-05-15T10:02:00Z', invoiceNumber: 'INV-2025-1236',
-  },
-  {
-    invoiceId: 'INV-2025-1235', vendorName: 'Digital Services', invoiceDate: '2025-05-14',
-    totalAmount: 12500.00, currency: 'INR', status: 'Processed' as InvoiceStatus,
-    receivedOn: '2025-05-14T15:10:00Z', extractionConfidence: 96,
-    lineItems: [], subtotal: 10593.22, cgst: 953.39, sgst: 953.39,
-    anomalies: [], createdAt: '2025-05-14T15:10:00Z', invoiceNumber: 'INV-2025-1235',
-  },
 ];
 
 // ─── Service Functions ───────────────────────────────────────────
@@ -117,58 +122,122 @@ export interface PaginatedResult<T> {
   totalPages: number;
 }
 
-// Simulate async delay for realistic UX
-const delay = (ms: number) => new Promise((res) => setTimeout(res, ms));
+export interface DashboardStats {
+  totalInvoices: number;
+  processed: number;
+  inProgress: number;
+  exceptions: number;
+  inReview: number;
+  processedPercentage: string;
+  exceptionPercentage: string;
+}
 
 export async function getInvoices(
   filters: InvoiceFilters = {}
 ): Promise<PaginatedResult<Invoice>> {
-  // When API is ready: return apiClient.get('/invoices', filters);
-  await delay(300);
+  if (!import.meta.env.VITE_API_BASE_URL) {
+    // Local mock fallback logic
+    let result = [...mockInvoicesRaw] as Invoice[];
 
-  let result = [...mockInvoicesRaw] as Invoice[];
+    if (filters.search) {
+      const s = filters.search.toLowerCase();
+      result = result.filter(
+        (inv) =>
+          inv.invoiceId.toLowerCase().includes(s) ||
+          inv.vendorName.toLowerCase().includes(s) ||
+          inv.invoiceNumber.toLowerCase().includes(s)
+      );
+    }
 
-  // Search filter
+    if (filters.status && filters.status !== 'All Status') {
+      result = result.filter((inv) => inv.status === filters.status);
+    }
+
+    if (filters.vendor && filters.vendor !== 'All Vendors') {
+      result = result.filter((inv) => inv.vendorName === filters.vendor);
+    }
+
+    // Sort
+    const sortField = (filters.sortField || 'receivedOn') as keyof Invoice;
+    const sortOrder = filters.sortOrder || 'desc';
+    result.sort((a, b) => {
+      let aVal: any = a[sortField];
+      let bVal: any = b[sortField];
+      if (sortField === 'invoiceDate' || sortField === 'receivedOn') {
+        aVal = new Date(aVal).getTime();
+        bVal = new Date(bVal).getTime();
+      }
+      if (aVal < bVal) return sortOrder === 'asc' ? -1 : 1;
+      if (aVal > bVal) return sortOrder === 'asc' ? 1 : -1;
+      return 0;
+    });
+
+    const page = filters.page || 1;
+    const pageSize = filters.pageSize || 10;
+    const total = result.length;
+    const start = (page - 1) * pageSize;
+    const data = result.slice(start, start + pageSize);
+
+    return {
+      data,
+      total,
+      page,
+      pageSize,
+      totalPages: Math.ceil(total / pageSize),
+    };
+  }
+
+  // Real API Gateway Request
+  const params: Record<string, string> = {};
+  if (filters.status && filters.status !== 'All Status') {
+    params.status = mapUIStatusToBackend(filters.status);
+  }
+  if (filters.pageSize) {
+    params.pageSize = String(filters.pageSize);
+  }
+
+  const response = await apiClient.get<{ items: any[]; lastKey?: string }>('/invoices', params);
+  const items = (response.items || []).map((inv) => ({
+    ...inv,
+    status: mapBackendStatusToUI(inv.status),
+  }));
+
+  // Perform remaining search & filters in client memory for rich UX
+  let filtered = items;
   if (filters.search) {
     const s = filters.search.toLowerCase();
-    result = result.filter(
+    filtered = filtered.filter(
       (inv) =>
         inv.invoiceId.toLowerCase().includes(s) ||
-        inv.vendorName.toLowerCase().includes(s)
+        inv.vendorName.toLowerCase().includes(s) ||
+        (inv.invoiceNumber && inv.invoiceNumber.toLowerCase().includes(s))
     );
   }
 
-  // Status filter
-  if (filters.status && filters.status !== 'All Status') {
-    result = result.filter((inv) => inv.status === filters.status);
-  }
-
-  // Vendor filter
   if (filters.vendor && filters.vendor !== 'All Vendors') {
-    result = result.filter((inv) => inv.vendorName === filters.vendor);
+    filtered = filtered.filter((inv) => inv.vendorName === filters.vendor);
   }
 
-  // Sort
+  // Sorting
   const sortField = (filters.sortField || 'receivedOn') as keyof Invoice;
   const sortOrder = filters.sortOrder || 'desc';
-  result.sort((a, b) => {
+  filtered.sort((a, b) => {
     let aVal: any = a[sortField];
     let bVal: any = b[sortField];
     if (sortField === 'invoiceDate' || sortField === 'receivedOn') {
-      aVal = new Date(aVal).getTime();
-      bVal = new Date(bVal).getTime();
+      aVal = new Date(aVal || '').getTime();
+      bVal = new Date(bVal || '').getTime();
     }
     if (aVal < bVal) return sortOrder === 'asc' ? -1 : 1;
     if (aVal > bVal) return sortOrder === 'asc' ? 1 : -1;
     return 0;
   });
 
-  // Pagination
   const page = filters.page || 1;
   const pageSize = filters.pageSize || 10;
-  const total = result.length;
+  const total = filtered.length;
   const start = (page - 1) * pageSize;
-  const data = result.slice(start, start + pageSize);
+  const data = filtered.slice(start, start + pageSize);
 
   return {
     data,
@@ -180,18 +249,70 @@ export async function getInvoices(
 }
 
 export async function getInvoiceById(id: string): Promise<Invoice | null> {
-  // When API is ready: return apiClient.get(`/invoices/${id}`);
-  await delay(200);
-  return (mockInvoicesRaw as Invoice[]).find((inv) => inv.invoiceId === id) || null;
+  if (!import.meta.env.VITE_API_BASE_URL) {
+    return (mockInvoicesRaw as Invoice[]).find((inv) => inv.invoiceId === id) || null;
+  }
+
+  const response = await apiClient.get<{ invoice: any; auditLogs: any[] }>(`/invoices/${id}`);
+  if (response && response.invoice) {
+    return {
+      ...response.invoice,
+      status: mapBackendStatusToUI(response.invoice.status),
+    };
+  }
+  return null;
 }
 
 export async function uploadInvoice(
-  _file: File,
-  _metadata?: Record<string, string>
+  file: File,
+  metadata?: Record<string, string>
 ): Promise<{ invoiceId: string; status: string }> {
-  // When API is ready: return apiClient.uploadFile('/invoices/upload', file, metadata);
-  await delay(1500);
-  return { invoiceId: `INV-2025-${Date.now() % 10000}`, status: 'In Progress' };
+  if (!import.meta.env.VITE_API_BASE_URL) {
+    await new Promise((res) => setTimeout(res, 1500));
+    return { invoiceId: `INV-2025-${Date.now() % 10000}`, status: 'In Progress' };
+  }
+
+  // Upload to API Gateway /upload endpoint directly as binary bytes
+  const arrayBuffer = await file.arrayBuffer();
+  
+  const headers: Record<string, string> = {
+    'x-filename': file.name,
+  };
+  if (metadata) {
+    headers['x-invoice-metadata'] = JSON.stringify(metadata);
+  }
+
+  const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/upload`, {
+    method: 'POST',
+    body: arrayBuffer,
+    headers,
+  });
+
+  if (!response.ok) {
+    throw new Error(`Upload failed: ${response.statusText}`);
+  }
+
+  const result = await response.json();
+  return {
+    invoiceId: result.invoiceId,
+    status: 'In Progress',
+  };
+}
+
+export async function getDashboardStats(): Promise<DashboardStats> {
+  if (!import.meta.env.VITE_API_BASE_URL) {
+    return {
+      totalInvoices: 1246,
+      processed: 1078,
+      inProgress: 98,
+      exceptions: 70,
+      inReview: 24,
+      processedPercentage: '86.5',
+      exceptionPercentage: '5.6',
+    };
+  }
+
+  return apiClient.get<DashboardStats>('/dashboard');
 }
 
 export async function exportInvoices(filters: InvoiceFilters = {}): Promise<string> {
