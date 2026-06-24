@@ -36,7 +36,37 @@ const sfnClient = new SFNClient({ region: process.env.AWS_REGION || 'ap-south-1'
 const sesClient = new SESClient({ region: process.env.AWS_REGION || 'ap-south-1' });
 const snsClient = new SNSClient({ region: process.env.AWS_REGION || 'ap-south-1' });
 
-const APPROVAL_API_URL = process.env.APPROVAL_API_URL || '';
+import { APIGatewayClient, GetRestApisCommand } from '@aws-sdk/client-api-gateway';
+
+const apigatewayClient = new APIGatewayClient({ region: process.env.AWS_REGION || 'ap-south-1' });
+
+let cachedApiUrl: string | null = null;
+
+async function getApprovalApiUrl(): Promise<string> {
+  if (cachedApiUrl) return cachedApiUrl;
+  
+  const envUrl = process.env.APPROVAL_API_URL || '';
+  if (envUrl && !envUrl.includes('PLACEHOLDER') && envUrl.startsWith('http')) {
+    cachedApiUrl = envUrl;
+    return envUrl;
+  }
+  
+  try {
+    const response = await apigatewayClient.send(new GetRestApisCommand({}));
+    const env = process.env.ENVIRONMENT || 'prod';
+    const targetName = `InvoicePipelineAPI-${env}`;
+    const api = response.items?.find(item => item.name === targetName);
+    if (api && api.id) {
+      cachedApiUrl = `https://${api.id}.execute-api.${process.env.AWS_REGION || 'ap-south-1'}.amazonaws.com/${env}`;
+      logger.info('Auto-discovered API Gateway URL', { url: cachedApiUrl });
+      return cachedApiUrl;
+    }
+  } catch (error) {
+    logger.error('Failed to auto-discover API Gateway URL', { error });
+  }
+  
+  return envUrl;
+}
 const SES_SENDER_EMAIL = process.env.SES_SENDER_EMAIL || 'noreply@invoice-pipeline.example.com';
 const SNS_TOPIC_ARN = process.env.SNS_TOPIC_ARN || '';
 
@@ -522,8 +552,9 @@ export async function sendApprovalEmail(event: {
     assignedToEmail,
   } = event;
 
-  const approveUrl = `${APPROVAL_API_URL}/approve?token=${encodeURIComponent(taskToken)}&invoiceId=${invoiceId}`;
-  const rejectUrl = `${APPROVAL_API_URL}/reject?token=${encodeURIComponent(taskToken)}&invoiceId=${invoiceId}`;
+  const apiBaseUrl = await getApprovalApiUrl();
+  const approveUrl = `${apiBaseUrl}/approve?token=${encodeURIComponent(taskToken)}&invoiceId=${invoiceId}`;
+  const rejectUrl = `${apiBaseUrl}/reject?token=${encodeURIComponent(taskToken)}&invoiceId=${invoiceId}`;
 
   const emailHtml = `
 <!DOCTYPE html>

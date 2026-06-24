@@ -28,19 +28,19 @@ install:
 
 build:
 	@echo "Building application with SAM..."
-	sam build
+	sam build -t infrastructure/template.yaml --build-in-source
 
 deploy:
 	@echo "Deploying application to AWS..."
-	sam deploy
+	sam deploy -t infrastructure/template.yaml --config-file $(CURDIR)/samconfig.toml
 
 deploy-guided:
 	@echo "Deploying application interactively to AWS..."
-	sam deploy --guided
+	sam deploy --guided -t infrastructure/template.yaml --config-file $(CURDIR)/samconfig.toml
 
 local-api:
 	@echo "Starting local API Gateway..."
-	sam local start-api
+	sam local start-api -t infrastructure/template.yaml
 
 frontend-dev:
 	@echo "Starting frontend development server..."

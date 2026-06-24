@@ -51,7 +51,7 @@ Globals:
         ENVIRONMENT: !Ref Environment
         INVOICE_TABLE: !Ref InvoiceTable
         AUDIT_TABLE: !Ref AuditTable
-        RAW_BUCKET: !Ref RawBucket
+        RAW_BUCKET: !Sub 'invoice-pipeline-raw-${AWS::AccountId}'
         AUDIT_BUCKET: !Ref AuditBucket
         SNS_TOPIC_ARN: !Ref PipelineNotificationTopic
         SES_SENDER_EMAIL: !Ref SenderEmail
@@ -255,18 +255,18 @@ Resources:
       MemorySize: 512
       Environment:
         Variables:
-          STATE_MACHINE_ARN: !Ref InvoicePipelineStateMachine
+          STATE_MACHINE_ARN: !Sub 'arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:InvoicePipelineStateMachine-${Environment}'
       Policies:
         - S3CrudPolicy:
-            BucketName: !Ref RawBucket
+            BucketName: !Sub 'invoice-pipeline-raw-${AWS::AccountId}'
         - S3ReadPolicy:
-            BucketName: !Ref RawBucket
+            BucketName: !Sub 'invoice-pipeline-raw-${AWS::AccountId}'
         - DynamoDBCrudPolicy:
             TableName: !Ref InvoiceTable
         - DynamoDBCrudPolicy:
             TableName: !Ref AuditTable
         - StepFunctionsExecutionPolicy:
-            StateMachineName: !GetAtt InvoicePipelineStateMachine.Name
+            StateMachineName: !Sub 'InvoicePipelineStateMachine-${Environment}'
       Events:
         UploadApi:
           Type: Api
@@ -299,7 +299,9 @@ Resources:
       Action: lambda:InvokeFunction
       Principal: s3.amazonaws.com
       SourceAccount: !Ref 'AWS::AccountId'
-      SourceArn: !GetAtt RawBucket.Arn
+      SourceArn: !Sub 'arn:aws:s3:::invoice-pipeline-raw-${AWS::AccountId}'
+
+
 
   # --- Textract Processor Lambda ---
   TextractProcessorFunction:
@@ -313,7 +315,7 @@ Resources:
       MemorySize: 1024
       Policies:
         - S3ReadPolicy:
-            BucketName: !Ref RawBucket
+            BucketName: !Sub 'invoice-pipeline-raw-${AWS::AccountId}'
         - S3CrudPolicy:
             BucketName: !Ref AuditBucket
         - DynamoDBCrudPolicy:
@@ -386,7 +388,7 @@ Resources:
       MemorySize: 256
       Environment:
         Variables:
-          APPROVAL_API_URL: !Sub 'https://${PipelineApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
+          APPROVAL_API_URL: !Sub 'https://PLACEHOLDER-API-ID.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
           REVIEWER_EMAIL: !Ref ReviewerEmail
       Policies:
         - DynamoDBCrudPolicy:
@@ -401,7 +403,11 @@ Resources:
                 - states:SendTaskSuccess
                 - states:SendTaskFailure
                 - states:SendTaskHeartbeat
-              Resource: !Ref InvoicePipelineStateMachine
+              Resource: !Sub 'arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:InvoicePipelineStateMachine-${Environment}'
+            - Effect: Allow
+              Action:
+                - apigateway:GET
+              Resource: !Sub 'arn:aws:apigateway:${AWS::Region}::/restapis'
             - Effect: Allow
               Action:
                 - ses:SendEmail
