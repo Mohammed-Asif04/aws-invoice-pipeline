@@ -87,7 +87,7 @@ interface APIGatewayProxyEvent {
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'Content-Type,Authorization',
+  'Access-Control-Allow-Headers': 'Content-Type,Authorization,X-Requested-With,x-filename,x-invoice-metadata,X-Filename,X-Invoice-Metadata',
   'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
   'Content-Type': 'application/json',
 };
@@ -96,8 +96,26 @@ const CORS_HEADERS = {
 // Main Handler — Routes API Gateway requests
 // ---------------------------------------------------------------------------
 
-export async function handler(event: APIGatewayProxyEvent): Promise<LambdaResponse> {
-  logger.info('Approval handler invoked', {
+export async function handler(event: any): Promise<any> {
+  // Check if this is a direct invocation from Step Functions
+  if (event && event.action === 'SEND_APPROVAL_EMAIL') {
+    logger.info('Approval handler invoked directly by Step Functions', {
+      invoiceId: event.invoiceId,
+      action: event.action,
+    });
+    try {
+      await updateInvoice(event.invoiceId, 'PENDING', {
+        taskToken: event.taskToken,
+      });
+      logger.info('Stored taskToken in DynamoDB for manual review callback lookup', { invoiceId: event.invoiceId });
+    } catch (dbErr) {
+      logger.error('Failed to store taskToken in DynamoDB', dbErr);
+    }
+    await sendApprovalEmail(event);
+    return { success: true, message: 'Approval email sent successfully' };
+  }
+
+  logger.info('Approval handler invoked via API Gateway', {
     method: event.httpMethod,
     path: event.path,
     resource: event.resource,
@@ -124,11 +142,11 @@ export async function handler(event: APIGatewayProxyEvent): Promise<LambdaRespon
     if (path.includes('/approvals') && event.httpMethod === 'POST') {
       return await handleApprovalAction(event);
     }
-    if (path.includes('/invoices') && event.httpMethod === 'GET') {
-      return await handleGetInvoices(event);
-    }
     if (path.match(/\/invoices\/[^/]+/) && event.httpMethod === 'GET') {
       return await handleGetInvoiceDetail(event);
+    }
+    if (path.includes('/invoices') && event.httpMethod === 'GET') {
+      return await handleGetInvoices(event);
     }
     if (path.includes('/exceptions') && event.httpMethod === 'GET') {
       return await handleGetExceptions(event);
@@ -250,6 +268,22 @@ async function handleEmailCallback(
 // Handle Approval Actions (from React UI)
 // ---------------------------------------------------------------------------
 
+// Helper to map UI fields to DynamoDB record fields
+function mapUIFieldToDbField(uiField: string): string {
+  switch (uiField) {
+    case 'Vendor Name': return 'vendorName';
+    case 'GSTIN': return 'gstin';
+    case 'Invoice Number': return 'invoiceNumber';
+    case 'Invoice Date': return 'invoiceDate';
+    case 'Due Date': return 'dueDate';
+    case 'PO Number': return 'poNumber';
+    case 'Total Amount': return 'totalAmount';
+    case 'Subtotal': return 'subtotal';
+    case 'tax': return 'cgst';
+    default: return uiField;
+  }
+}
+
 async function handleApprovalAction(
   event: APIGatewayProxyEvent
 ): Promise<LambdaResponse> {
@@ -263,31 +297,66 @@ async function handleApprovalAction(
   logger.info('Processing approval action', { invoiceId, action, reviewer });
 
   try {
+    let activeToken = taskToken;
+    if (!activeToken) {
+      const invoice = await getInvoice(invoiceId, 'PENDING');
+      if (invoice && invoice.taskToken) {
+        activeToken = invoice.taskToken;
+        logger.info('Retrieved taskToken from DynamoDB for approval', { invoiceId });
+      }
+    }
+
     switch (action) {
       case 'APPROVE': {
-        // Resume Step Functions with success
-        if (taskToken) {
-          await sfnClient.send(
-            new SendTaskSuccessCommand({
-              taskToken,
-              output: JSON.stringify({
-                action: 'APPROVE',
-                invoiceId,
-                reviewer,
-                comments,
-                correctedFields,
-                timestamp: new Date().toISOString(),
-              }),
-            })
-          );
+        // Resume Step Functions with success (non-blocking — token may have expired)
+        if (activeToken) {
+          try {
+            await sfnClient.send(
+              new SendTaskSuccessCommand({
+                taskToken: activeToken,
+                output: JSON.stringify({
+                  action: 'APPROVE',
+                  invoiceId,
+                  reviewer,
+                  comments,
+                  correctedFields,
+                  timestamp: new Date().toISOString(),
+                }),
+              })
+            );
+          } catch (sfnErr) {
+            logger.warn('Step Functions task token expired or invalid — proceeding with DB update', {
+              invoiceId,
+              error: String(sfnErr),
+            });
+          }
         }
 
-        await updateInvoice(invoiceId, 'PENDING', {
+        const dbUpdates: Record<string, any> = {
           status: 'PROCESSED',
           approvedBy: reviewer,
           approvalTimestamp: new Date().toISOString(),
           approvalComments: comments,
-        });
+          anomalies: [], // Clear anomalies on approval
+        };
+
+        if (correctedFields) {
+          for (const [key, val] of Object.entries(correctedFields)) {
+            if (!key.startsWith(`${invoiceId}-`)) {
+              continue;
+            }
+            const fieldName = key.replace(`${invoiceId}-`, '');
+            const dbField = mapUIFieldToDbField(fieldName);
+            if (dbField === 'totalAmount' || dbField === 'subtotal') {
+              const numericStr = String(val).replace(/[^0-9.]/g, '');
+              dbUpdates[dbField] = parseFloat(numericStr) || 0;
+            } else {
+              dbUpdates[dbField] = val;
+            }
+          }
+        }
+
+        await updateInvoice(invoiceId, 'PENDING', dbUpdates);
 
         await putAuditEntry({
           auditId: uuidv4(),
@@ -303,14 +372,21 @@ async function handleApprovalAction(
       }
 
       case 'REJECT': {
-        if (taskToken) {
-          await sfnClient.send(
-            new SendTaskFailureCommand({
-              taskToken,
-              error: 'REJECTED',
-              cause: comments || `Rejected by ${reviewer}`,
-            })
-          );
+        if (activeToken) {
+          try {
+            await sfnClient.send(
+              new SendTaskFailureCommand({
+                taskToken: activeToken,
+                error: 'REJECTED',
+                cause: comments || `Rejected by ${reviewer}`,
+              })
+            );
+          } catch (sfnErr) {
+            logger.warn('Step Functions task token expired or invalid — proceeding with DB update', {
+              invoiceId,
+              error: String(sfnErr),
+            });
+          }
         }
 
         await updateInvoice(invoiceId, 'PENDING', {
@@ -318,6 +394,7 @@ async function handleApprovalAction(
           approvedBy: reviewer,
           approvalTimestamp: new Date().toISOString(),
           approvalComments: comments,
+          anomalies: [], // Clear anomalies on rejection
         });
 
         await putAuditEntry({
@@ -480,14 +557,16 @@ async function handleGetDashboardStats(
   _event: APIGatewayProxyEvent
 ): Promise<LambdaResponse> {
   // Fetch counts for each status
-  const [processed, inProgress, exceptions, inReview] = await Promise.all([
+  const [processed, inProgress, exceptions, inReview, pendingReview, resolved] = await Promise.all([
     queryInvoicesByStatus('PROCESSED', 1),
     queryInvoicesByStatus('IN_PROGRESS', 1),
     queryInvoicesByStatus('EXCEPTION', 1),
     queryInvoicesByStatus('IN_REVIEW', 1),
+    queryInvoicesByStatus('PENDING_REVIEW', 1),
+    queryInvoicesByStatus('RESOLVED', 1),
   ]);
 
-  const total = processed.total + inProgress.total + exceptions.total + inReview.total;
+  const total = processed.total + inProgress.total + exceptions.total + inReview.total + pendingReview.total + resolved.total;
 
   return respond(200, {
     totalInvoices: total,
@@ -495,6 +574,8 @@ async function handleGetDashboardStats(
     inProgress: inProgress.total,
     exceptions: exceptions.total,
     inReview: inReview.total,
+    pendingReview: pendingReview.total,
+    resolved: resolved.total,
     processedPercentage: total > 0 ? ((processed.total / total) * 100).toFixed(1) : '0',
     exceptionPercentage: total > 0 ? ((exceptions.total / total) * 100).toFixed(1) : '0',
   });
@@ -628,23 +709,26 @@ export async function sendApprovalEmail(event: {
 </body>
 </html>`;
 
-  await sesClient.send(
-    new SendEmailCommand({
-      Source: SES_SENDER_EMAIL,
-      Destination: { ToAddresses: [assignedToEmail] },
-      Message: {
-        Subject: { Data: `[Action Required] Invoice ${invoiceId} from ${vendorName} — Review Needed` },
-        Body: {
-          Html: { Data: emailHtml },
-          Text: {
-            Data: `Invoice ${invoiceId} from ${vendorName} (₹${totalAmount.toLocaleString('en-IN')}) requires your review.\n\nApprove: ${approveUrl}\nReject: ${rejectUrl}`,
+  try {
+    await sesClient.send(
+      new SendEmailCommand({
+        Source: SES_SENDER_EMAIL,
+        Destination: { ToAddresses: [assignedToEmail] },
+        Message: {
+          Subject: { Data: `[Action Required] Invoice ${invoiceId} from ${vendorName} — Review Needed` },
+          Body: {
+            Html: { Data: emailHtml },
+            Text: {
+              Data: `Invoice ${invoiceId} from ${vendorName} (₹${totalAmount.toLocaleString('en-IN')}) requires your review.\n\nApprove: ${approveUrl}\nReject: ${rejectUrl}`,
+            },
           },
         },
-      },
-    })
-  );
-
-  logger.info('Approval email sent', { invoiceId, assignedToEmail });
+      })
+    );
+    logger.info('Approval email sent successfully', { invoiceId, assignedToEmail });
+  } catch (emailError) {
+    logger.error('Failed to send SES email (possibly unverified sandbox address). Continuing since approval can be done from dashboard.', emailError);
+  }
 }
 
 // ---------------------------------------------------------------------------

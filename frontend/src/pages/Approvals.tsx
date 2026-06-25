@@ -17,6 +17,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { StatusBadge } from '@/components/StatusBadge';
 import { useApprovals } from '@/hooks/useApprovals';
+import { ConfidenceScore } from '@/components/ConfidenceScore';
+import { ExceptionAlert } from '@/components/ExceptionAlert';
 
 export default function Approvals() {
   const {
@@ -404,8 +406,7 @@ export default function Approvals() {
                       <span className="font-medium text-foreground">{selectedItem.date}</span>
                     </div>
                     <div>
-                      <span className="text-[10px] text-muted-foreground block font-medium">AI Confidence</span>
-                      <span className={getConfidenceStyle(selectedItem.confidence)}>{selectedItem.confidence}%</span>
+                      <ConfidenceScore score={selectedItem.confidence} showProgress={true} />
                     </div>
                     <div>
                       <span className="text-[10px] text-muted-foreground block font-medium">Invoice Amount</span>
@@ -422,9 +423,7 @@ export default function Approvals() {
                   {/* Issue Description */}
                   <div className="space-y-1">
                     <h4 className="font-bold text-foreground">Issue Description</h4>
-                    <p className="text-muted-foreground bg-muted/40 p-2.5 rounded border border-border/60 leading-relaxed text-[11px]">
-                      {selectedItem.description}
-                    </p>
+                    <ExceptionAlert anomalies={[{ type: selectedItem.issueType as any, description: selectedItem.description, severity: 'HIGH' }]} />
                   </div>
 
                   {/* Extracted Data Correction Panel */}

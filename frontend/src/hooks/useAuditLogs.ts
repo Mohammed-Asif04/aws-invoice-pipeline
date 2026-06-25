@@ -110,9 +110,18 @@ async function fetchAuditLogs(filters: AuditLogFilters): Promise<AuditEntry[]> {
       invoices.map(async (inv) => {
         try {
           const detail = await apiClient.get<{ invoice: any; auditLogs: any[] }>(`/invoices/${inv.invoiceId}`);
-          return detail.auditLogs || [];
+          if (detail && detail.auditLogs && detail.auditLogs.length > 0) {
+            return detail.auditLogs;
+          }
+          const auditRes = await apiClient.get<{ entries: any[] }>('/audit', { invoiceId: inv.invoiceId });
+          return auditRes.entries || [];
         } catch {
-          return [];
+          try {
+            const auditRes = await apiClient.get<{ entries: any[] }>('/audit', { invoiceId: inv.invoiceId });
+            return auditRes.entries || [];
+          } catch {
+            return [];
+          }
         }
       })
     );

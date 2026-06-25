@@ -11,6 +11,7 @@ export default defineConfig({
       '@aws-sdk/client-ses': path.resolve(__dirname, 'node_modules/@aws-sdk/client-ses'),
       '@aws-sdk/client-sns': path.resolve(__dirname, 'node_modules/@aws-sdk/client-sns'),
       '@aws-sdk/client-dynamodb': path.resolve(__dirname, 'node_modules/@aws-sdk/client-dynamodb'),
+      '@aws-sdk/client-api-gateway': path.resolve(__dirname, 'node_modules/@aws-sdk/client-api-gateway'),
       '@aws-sdk/lib-dynamodb': path.resolve(__dirname, 'node_modules/@aws-sdk/lib-dynamodb'),
       'uuid': path.resolve(__dirname, 'node_modules/uuid'),
     },

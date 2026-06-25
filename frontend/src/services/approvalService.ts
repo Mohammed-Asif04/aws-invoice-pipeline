@@ -102,7 +102,7 @@ export function mapBackendInvoiceToExceptionItem(invoice: any): ExceptionItem {
       }
     };
     
-    const isEditable = ['gstin', 'totalAmount', 'vendorName'].includes(f.fieldName);
+    const isEditable = ['gstin', 'totalAmount', 'vendorName', 'invoiceNumber'].includes(f.fieldName);
     
     return {
       field: mapFieldName(f.fieldName),

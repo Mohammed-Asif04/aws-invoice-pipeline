@@ -28,21 +28,6 @@
           "ResultPath": "$.error"
         }
       ],
-      "Next": "LogExtractionComplete"
-    },
-
-    "LogExtractionComplete": {
-      "Type": "Task",
-      "Resource": "${AuditLoggerFunctionArn}",
-      "Parameters": {
-        "invoiceId.$": "$.invoiceId",
-        "action": "LOG_EVENT",
-        "event": "Document extraction completed",
-        "eventType": "EXTRACTION",
-        "user": "system",
-        "details.$": "States.Format('Textract extraction complete for invoice {}', $.invoiceId)"
-      },
-      "ResultPath": "$.auditLog",
       "Next": "ValidateDocument"
     },
 
@@ -59,9 +44,9 @@
             "ThrottlingException",
             "ModelTimeoutException"
           ],
-          "IntervalSeconds": 10,
+          "IntervalSeconds": 3,
           "MaxAttempts": 2,
-          "BackoffRate": 2.0
+          "BackoffRate": 1.5
         }
       ],
       "Catch": [

@@ -32,7 +32,7 @@ export function mapBackendStatusToUI(status: string): InvoiceStatus {
 
 // ─── Mock Data (Fallback) ─────────────────────────────────────────
 
-const mockInvoicesRaw = [
+const mockInvoicesRaw: Invoice[] = [
   {
     invoiceId: 'INV-2025-1246', vendorName: 'ABC Solutions Ltd.', invoiceDate: '2025-05-18',
     totalAmount: 124500.00, currency: 'INR', status: 'Processed' as InvoiceStatus,
@@ -128,6 +128,8 @@ export interface DashboardStats {
   inProgress: number;
   exceptions: number;
   inReview: number;
+  resolved?: number;
+  pendingReview?: number;
   processedPercentage: string;
   exceptionPercentage: string;
 }
@@ -268,8 +270,36 @@ export async function uploadInvoice(
   metadata?: Record<string, string>
 ): Promise<{ invoiceId: string; status: string }> {
   if (!import.meta.env.VITE_API_BASE_URL) {
-    await new Promise((res) => setTimeout(res, 1500));
-    return { invoiceId: `INV-2025-${Date.now() % 10000}`, status: 'In Progress' };
+    await new Promise((res) => setTimeout(res, 1000));
+    const newId = `INV-2025-${Math.floor(Math.random() * 9000) + 1000}`;
+    const newInvoice: Invoice = {
+      invoiceId: newId,
+      vendorName: metadata?.vendor || 'BufferOn Pvt. Ltd.',
+      invoiceDate: metadata?.invoiceDate || '2025-05-18',
+      totalAmount: 145000.00,
+      currency: 'INR',
+      status: 'In Progress',
+      receivedOn: new Date().toISOString(),
+      extractionConfidence: 94,
+      lineItems: [] as any[],
+      subtotal: 122881.36,
+      cgst: 11059.32,
+      sgst: 11059.32,
+      anomalies: [],
+      createdAt: new Date().toISOString(),
+      invoiceNumber: metadata?.invoiceNumber || `INV-${newId}`,
+    };
+    mockInvoicesRaw.unshift(newInvoice);
+
+    // Transition from In Progress to Processed after 8 seconds
+    setTimeout(() => {
+      const found = mockInvoicesRaw.find((inv) => inv.invoiceId === newId);
+      if (found) {
+        found.status = 'Processed';
+      }
+    }, 8000);
+
+    return { invoiceId: newId, status: 'In Progress' };
   }
 
   // Upload to API Gateway /upload endpoint directly as binary bytes

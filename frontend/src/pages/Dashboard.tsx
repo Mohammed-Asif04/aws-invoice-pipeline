@@ -9,10 +9,6 @@ import {
   Calendar,
   ArrowRight,
   ArrowUpRight,
-  Database,
-  UploadCloud,
-  FileSpreadsheet,
-  Brain,
   RefreshCw,
   Loader2,
 } from 'lucide-react';
@@ -22,19 +18,37 @@ import { StatusBadge } from '@/components/StatusBadge';
 import { getDashboardStats, getInvoices, type DashboardStats } from '@/services/invoiceService';
 import { getExceptions } from '@/services/approvalService';
 import type { Invoice } from '@/types';
+import { StatsCard } from '@/components/StatsCard';
+import { PipelineStatus } from '@/components/PipelineStatus';
 
 export default function Dashboard() {
+  const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
   const [stats, setStats] = useState<DashboardStats>({
     totalInvoices: 0,
     processed: 0,
     inProgress: 0,
     exceptions: 0,
     inReview: 0,
+    resolved: 0,
+    pendingReview: 0,
     processedPercentage: '0',
     exceptionPercentage: '0',
   });
   const [recentInvoices, setRecentInvoices] = useState<Invoice[]>([]);
   const [topExceptions, setTopExceptions] = useState<{ reason: string; count: number }[]>([]);
+  const [chartData, setChartData] = useState<{
+    labels: string[];
+    processed: number[];
+    inProgress: number[];
+    exceptions: number[];
+    maxVal: number;
+  }>({
+    labels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Today'],
+    processed: [0, 0, 0, 0, 0, 0],
+    inProgress: [0, 0, 0, 0, 0, 0],
+    exceptions: [0, 0, 0, 0, 0, 0],
+    maxVal: 10,
+  });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -42,10 +56,11 @@ export default function Dashboard() {
     setLoading(true);
     setError(null);
     try {
-      const [statsData, invoicesData, exceptionsData] = await Promise.all([
+      const [statsData, invoicesData, exceptionsData, allInvoicesResult] = await Promise.all([
         getDashboardStats(),
         getInvoices({ pageSize: 5 }),
         getExceptions(),
+        getInvoices({ pageSize: 100 }),
       ]);
 
       setStats(statsData);
@@ -76,6 +91,65 @@ export default function Dashboard() {
       } else {
         setTopExceptions(topList);
       }
+
+      // Compute Chart Data dynamically from last 6 days
+      const days = 6;
+      const labels: string[] = [];
+      const processedCounts: number[] = Array(days).fill(0);
+      const inProgressCounts: number[] = Array(days).fill(0);
+      const exceptionCountsList: number[] = Array(days).fill(0);
+
+      const today = new Date();
+      for (let i = days - 1; i >= 0; i--) {
+        const d = new Date();
+        d.setDate(today.getDate() - i);
+        const dayLabel = i === 0 ? 'Today' : d.toLocaleDateString('en-US', { weekday: 'short' });
+        labels.push(dayLabel);
+      }
+
+      const invoices = allInvoicesResult.data;
+      invoices.forEach((inv) => {
+        const receivedDate = new Date(inv.receivedOn || inv.createdAt || '');
+        const diffTime = today.getTime() - receivedDate.getTime();
+        const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+        
+        if (diffDays >= 0 && diffDays < days) {
+          const index = (days - 1) - diffDays;
+          if (inv.status === 'Processed') {
+            processedCounts[index]++;
+          } else if (inv.status === 'In Progress') {
+            inProgressCounts[index]++;
+          } else if (inv.status === 'Exception' || inv.status === 'In Review' || inv.status === 'Pending Review') {
+            exceptionCountsList[index]++;
+          }
+        }
+      });
+
+      const isAllZero = processedCounts.reduce((a, b) => a + b, 0) === 0;
+      if (isAllZero && !import.meta.env.VITE_API_BASE_URL) {
+        // Safe mock fallback curve for rich styling when offline
+        setChartData({
+          labels,
+          processed: [5, 12, 18, 25, 32, 45],
+          inProgress: [2, 4, 3, 5, 2, 4],
+          exceptions: [1, 2, 1, 3, 1, 2],
+          maxVal: 50,
+        });
+      } else {
+        const maxVal = Math.max(
+          10,
+          ...processedCounts,
+          ...inProgressCounts,
+          ...exceptionCountsList
+        );
+        setChartData({
+          labels,
+          processed: processedCounts,
+          inProgress: inProgressCounts,
+          exceptions: exceptionCountsList,
+          maxVal: Math.ceil(maxVal * 1.2),
+        });
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load dashboard statistics');
     } finally {
@@ -86,6 +160,29 @@ export default function Dashboard() {
   useEffect(() => {
     fetchDashboardData();
   }, [fetchDashboardData]);
+
+  // Set default selected invoice
+  useEffect(() => {
+    if (recentInvoices.length > 0 && !selectedInvoiceId) {
+      setSelectedInvoiceId(recentInvoices[0].invoiceId);
+    }
+  }, [recentInvoices, selectedInvoiceId]);
+
+  // Auto-poll while invoices are in progress
+  useEffect(() => {
+    const hasInProgress = recentInvoices.some((inv) => inv.status === 'In Progress');
+    if (hasInProgress) {
+      const interval = setInterval(() => {
+        fetchDashboardData();
+      }, 3000);
+      return () => clearInterval(interval);
+    }
+  }, [recentInvoices, fetchDashboardData]);
+
+  // Find currently visualized invoice
+  const selectedInvoice = recentInvoices.find((inv) => inv.invoiceId === selectedInvoiceId) || recentInvoices[0] || null;
+
+
 
   // Calculate dynamic Total Value (simulated scale based on processed count or list sum)
   const calculateTotalValue = () => {
@@ -138,109 +235,81 @@ export default function Dashboard() {
 
       {/* Row 1: KPI Statistics Banner */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
-        {/* Total Invoices */}
-        <Card className="border border-border">
-          <CardContent className="p-5 flex items-center justify-between">
-            <div className="space-y-1">
-              <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider block">
-                Total Invoices
-              </span>
-              <span className="text-2xl font-extrabold text-foreground block tracking-tight">
-                {loading ? '...' : stats.totalInvoices.toLocaleString()}
-              </span>
-              <span className="text-[10px] text-emerald-600 font-semibold flex items-center gap-0.5 mt-0.5">
-                <TrendingUp className="w-3 h-3" />
-                Live <span className="text-muted-foreground font-medium">pipeline feed</span>
-              </span>
-            </div>
-            <div className="p-3 bg-blue-50 dark:bg-blue-500/10 rounded-xl">
-              <FileText className="w-6 h-6 text-blue-600 dark:text-blue-400" />
-            </div>
-          </CardContent>
-        </Card>
+        <StatsCard
+          title="Total Invoices"
+          value={stats.totalInvoices.toLocaleString()}
+          icon={FileText}
+          iconBgClass="bg-blue-50 dark:bg-blue-500/10"
+          iconColorClass="text-blue-600 dark:text-blue-400"
+          loading={loading}
+          trendText={
+            <span className="text-[10px] text-emerald-600 font-semibold flex items-center gap-0.5 mt-0.5 select-none">
+              <TrendingUp className="w-3 h-3" />
+              Live <span className="text-muted-foreground font-medium">pipeline feed</span>
+            </span>
+          }
+        />
 
-        {/* Processed */}
-        <Card className="border border-border">
-          <CardContent className="p-5 flex items-center justify-between">
-            <div className="space-y-1">
-              <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider block">
-                Processed
-              </span>
-              <span className="text-2xl font-extrabold text-foreground block tracking-tight">
-                {loading ? '...' : stats.processed.toLocaleString()}
-              </span>
-              <span className="text-[10px] text-emerald-600 font-semibold block mt-0.5">
-                {stats.processedPercentage}% <span className="text-muted-foreground font-medium">of total</span>
-              </span>
-            </div>
-            <div className="p-3 bg-emerald-50 dark:bg-emerald-500/10 rounded-xl">
-              <CheckCircle2 className="w-6 h-6 text-emerald-600 dark:text-emerald-400" />
-            </div>
-          </CardContent>
-        </Card>
+        <StatsCard
+          title="Processed"
+          value={stats.processed.toLocaleString()}
+          icon={CheckCircle2}
+          iconBgClass="bg-emerald-50 dark:bg-emerald-500/10"
+          iconColorClass="text-emerald-600 dark:text-emerald-400"
+          loading={loading}
+          trendText={
+            <span className="text-[10px] text-emerald-600 font-semibold block mt-0.5 select-none">
+              {stats.processedPercentage}% <span className="text-muted-foreground font-medium">of total</span>
+            </span>
+          }
+        />
 
-        {/* In Progress */}
-        <Card className="border border-border">
-          <CardContent className="p-5 flex items-center justify-between">
-            <div className="space-y-1">
-              <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider block">
-                In Progress
-              </span>
-              <span className="text-2xl font-extrabold text-foreground block tracking-tight">
-                {loading ? '...' : stats.inProgress.toLocaleString()}
-              </span>
-              <span className="text-[10px] text-amber-600 font-semibold block mt-0.5">
-                Active <span className="text-muted-foreground font-medium">extractions</span>
-              </span>
-            </div>
-            <div className="p-3 bg-amber-50 dark:bg-amber-500/10 rounded-xl">
-              <Clock className="w-6 h-6 text-amber-600 dark:text-amber-400" />
-            </div>
-          </CardContent>
-        </Card>
+        <StatsCard
+          title="In Progress"
+          value={stats.inProgress.toLocaleString()}
+          icon={Clock}
+          iconBgClass="bg-amber-50 dark:bg-amber-500/10"
+          iconColorClass="text-amber-600 dark:text-amber-400"
+          loading={loading}
+          trendText={
+            <span className="text-[10px] text-amber-600 font-semibold block mt-0.5 select-none">
+              Active <span className="text-muted-foreground font-medium">extractions</span>
+            </span>
+          }
+        />
 
-        {/* Exceptions */}
-        <Card className="border border-border">
-          <CardContent className="p-5 flex items-center justify-between">
-            <div className="space-y-1">
-              <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider block">
-                Exceptions
-              </span>
-              <span className="text-2xl font-extrabold text-foreground block tracking-tight">
-                {loading ? '...' : stats.exceptions.toLocaleString()}
-              </span>
-              <span className="text-[10px] text-red-500 font-semibold block mt-0.5">
-                {stats.exceptionPercentage}% <span className="text-muted-foreground font-medium">rate</span>
-              </span>
-            </div>
-            <div className="p-3 bg-red-50 dark:bg-red-500/10 rounded-xl">
-              <AlertTriangle className="w-6 h-6 text-red-600 dark:text-red-400" />
-            </div>
-          </CardContent>
-        </Card>
+        <StatsCard
+          title="Exceptions"
+          value={stats.exceptions.toLocaleString()}
+          icon={AlertTriangle}
+          iconBgClass="bg-red-50 dark:bg-red-500/10"
+          iconColorClass="text-red-600 dark:text-red-400"
+          loading={loading}
+          trendText={
+            <span className="text-[10px] text-red-500 font-semibold block mt-0.5 select-none">
+              {stats.exceptionPercentage}% <span className="text-muted-foreground font-medium">rate</span>
+            </span>
+          }
+        />
 
-        {/* Total Value */}
-        <Card className="border border-border">
-          <CardContent className="p-5 flex items-center justify-between">
-            <div className="space-y-1">
-              <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider block">
-                Est. Value
-              </span>
-              <span className="text-2xl font-extrabold text-foreground block tracking-tight">
-                {loading ? '...' : calculateTotalValue()}
-              </span>
-              <span className="text-[10px] text-emerald-600 font-semibold flex items-center gap-0.5 mt-0.5">
-                <TrendingUp className="w-3 h-3" />
-                Live <span className="text-muted-foreground font-medium">estimate</span>
-              </span>
-            </div>
-            <div className="p-3 bg-indigo-50 dark:bg-indigo-500/10 rounded-xl">
-              <span className="text-lg font-black text-indigo-600 dark:text-indigo-400 select-none">
-                ₹
-              </span>
-            </div>
-          </CardContent>
-        </Card>
+        <StatsCard
+          title="Est. Value"
+          value={calculateTotalValue()}
+          icon={() => (
+            <span className="text-lg font-black text-indigo-600 dark:text-indigo-400 select-none">
+              ₹
+            </span>
+          )}
+          iconBgClass="bg-indigo-50 dark:bg-indigo-500/10"
+          iconColorClass=""
+          loading={loading}
+          trendText={
+            <span className="text-[10px] text-emerald-600 font-semibold flex items-center gap-0.5 mt-0.5 select-none">
+              <TrendingUp className="w-3 h-3" />
+              Live <span className="text-muted-foreground font-medium">estimate</span>
+            </span>
+          }
+        />
       </div>
 
       {/* Row 2: Pipeline flowchart & Line Chart */}
@@ -248,107 +317,34 @@ export default function Dashboard() {
         {/* Left Card: Invoice Processing Pipeline flowchart */}
         <Card className="lg:col-span-2 border border-border flex flex-col justify-between shadow-sm">
           <CardHeader className="pb-3 select-none">
-            <CardTitle className="text-base font-semibold font-heading">Invoice Processing Pipeline</CardTitle>
-            <CardDescription className="text-xs">Processing sequence and stage totals</CardDescription>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div>
+                <CardTitle className="text-base font-semibold font-heading">Invoice Processing Pipeline</CardTitle>
+                <CardDescription className="text-xs">Processing sequence and stage totals</CardDescription>
+              </div>
+              {selectedInvoice && (
+                <div className="px-3 py-1 bg-muted/60 border border-border rounded-lg text-[11px] font-semibold flex items-center gap-2">
+                  <span className="text-muted-foreground">Visualizing Path:</span>
+                  <span className="text-primary font-bold">{selectedInvoice.invoiceId}</span>
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />
+                  <StatusBadge status={selectedInvoice.status} />
+                </div>
+              )}
+            </div>
           </CardHeader>
           <CardContent className="space-y-6">
-            {/* Flowchart Diagram */}
-            <div className="flex items-start justify-between relative py-2 select-none">
-              {/* Node 1 */}
-              <div className="flex flex-col items-center text-center space-y-2 flex-1">
-                <div className="w-20 h-20 border border-indigo-100 dark:border-indigo-950 bg-indigo-50/10 dark:bg-indigo-950/5 rounded-2xl flex items-center justify-center relative shadow-sm hover:shadow-md transition-shadow">
-                  <UploadCloud className="w-10 h-10 text-indigo-600 dark:text-indigo-400" />
-                </div>
-                <div className="space-y-0.5">
-                  <p className="text-[11px] font-bold text-foreground">1. Upload</p>
-                  <p className="text-[10px] text-muted-foreground leading-none">S3</p>
-                  <p className="text-sm font-extrabold text-indigo-600 dark:text-indigo-400 mt-1">
-                    {loading ? '...' : stats.totalInvoices}
-                  </p>
-                </div>
-              </div>
-
-              {/* Arrow */}
-              <svg className="w-12 h-8 text-muted-foreground/30 self-start mt-[24px] shrink-0" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 64 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M4 12h56M52 5l8 7-8 7" />
-              </svg>
-
-              {/* Node 2 */}
-              <div className="flex flex-col items-center text-center space-y-2 flex-1">
-                <div className="w-20 h-20 border border-emerald-100 dark:border-emerald-950 bg-emerald-50/10 dark:bg-emerald-950/5 rounded-2xl flex items-center justify-center relative shadow-sm hover:shadow-md transition-shadow">
-                  <FileSpreadsheet className="w-10 h-10 text-emerald-600 dark:text-emerald-400" />
-                </div>
-                <div className="space-y-0.5">
-                  <p className="text-[11px] font-bold text-foreground">2. Extraction</p>
-                  <p className="text-[10px] text-muted-foreground leading-none">Textract</p>
-                  <p className="text-sm font-extrabold text-emerald-600 dark:text-emerald-400 mt-1">
-                    {loading ? '...' : stats.totalInvoices}
-                  </p>
-                </div>
-              </div>
-
-              {/* Arrow */}
-              <svg className="w-12 h-8 text-muted-foreground/30 self-start mt-[24px] shrink-0" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 64 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M4 12h56M52 5l8 7-8 7" />
-              </svg>
-
-              {/* Node 3 */}
-              <div className="flex flex-col items-center text-center space-y-2 flex-1">
-                <div className="w-20 h-20 border border-amber-100 dark:border-amber-950 bg-amber-50/10 dark:bg-amber-950/5 rounded-2xl flex items-center justify-center relative shadow-sm hover:shadow-md transition-shadow">
-                  <Brain className="w-10 h-10 text-amber-500 dark:text-amber-400" />
-                </div>
-                <div className="space-y-0.5">
-                  <p className="text-[11px] font-bold text-foreground">3. Validation</p>
-                  <p className="text-[10px] text-muted-foreground leading-none">Bedrock (LLM)</p>
-                  <p className="text-sm font-extrabold text-amber-500 dark:text-amber-400 mt-1">
-                    {loading ? '...' : Math.max(0, stats.totalInvoices - stats.inProgress)}
-                  </p>
-                </div>
-              </div>
-
-              {/* Arrow */}
-              <svg className="w-12 h-8 text-muted-foreground/30 self-start mt-[24px] shrink-0" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 64 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M4 12h56M52 5l8 7-8 7" />
-              </svg>
-
-              {/* Node 4 */}
-              <div className="flex flex-col items-center text-center space-y-2 flex-1">
-                <div className="w-20 h-20 border border-blue-100 dark:border-blue-950 bg-blue-50/10 dark:bg-blue-950/5 rounded-2xl flex items-center justify-center relative shadow-sm hover:shadow-md transition-shadow">
-                  <CheckCircle2 className="w-10 h-10 text-blue-600 dark:text-blue-400" />
-                </div>
-                <div className="space-y-0.5">
-                  <p className="text-[11px] font-bold text-foreground">4. Approval</p>
-                  <p className="text-[10px] text-muted-foreground leading-none">Step Functions</p>
-                  <p className="text-sm font-extrabold text-blue-600 dark:text-blue-400 mt-1">
-                    {loading ? '...' : (stats.exceptions + stats.processed + stats.inReview)}
-                  </p>
-                </div>
-              </div>
-
-              {/* Arrow */}
-              <svg className="w-12 h-8 text-muted-foreground/30 self-start mt-[24px] shrink-0" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 64 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M4 12h56M52 5l8 7-8 7" />
-              </svg>
-
-              {/* Node 5 */}
-              <div className="flex flex-col items-center text-center space-y-2 flex-1">
-                <div className="w-20 h-20 border border-teal-100 dark:border-teal-950 bg-teal-50/10 dark:bg-teal-950/5 rounded-2xl flex items-center justify-center relative shadow-sm hover:shadow-md transition-shadow">
-                  <Database className="w-10 h-10 text-teal-600 dark:text-teal-400" />
-                </div>
-                <div className="space-y-0.5">
-                  <p className="text-[11px] font-bold text-foreground">5. Store</p>
-                  <p className="text-[10px] text-muted-foreground leading-none">DynamoDB</p>
-                  <p className="text-sm font-extrabold text-teal-600 dark:text-teal-400 mt-1">
-                    {loading ? '...' : stats.processed}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Health progress bar */}
-            <div className="w-full bg-muted/60 h-2.5 rounded-full overflow-hidden select-none">
-              <div className="bg-emerald-500 h-full rounded-full transition-all" style={{ width: `${stats.processedPercentage}%` }} />
-            </div>
+            <PipelineStatus
+              selectedInvoice={selectedInvoice}
+              stats={{
+                totalInvoices: stats.totalInvoices,
+                processed: stats.processed,
+                inProgress: stats.inProgress,
+                exceptions: stats.exceptions,
+                inReview: stats.inReview,
+                processedPercentage: stats.processedPercentage,
+              }}
+              loading={loading}
+            />
 
             {/* Health indicators */}
             <div className="flex items-center justify-between border-t border-border pt-4 text-xs select-none">
@@ -388,52 +384,55 @@ export default function Dashboard() {
             {/* Pure SVG Line Chart */}
             <svg viewBox="0 0 500 220" className="w-full h-full text-muted-foreground select-none overflow-visible">
               <line x1="40" y1="30" x2="480" y2="30" className="stroke-border stroke-1" strokeDasharray="3 3" />
-              <text x="30" y="34" className="text-[9px] text-right font-medium fill-muted-foreground" textAnchor="end">50</text>
+              <text x="30" y="34" className="text-[9px] text-right font-medium fill-muted-foreground" textAnchor="end">{chartData.maxVal}</text>
 
               <line x1="40" y1="75" x2="480" y2="75" className="stroke-border stroke-1" strokeDasharray="3 3" />
-              <text x="30" y="79" className="text-[9px] text-right font-medium fill-muted-foreground" textAnchor="end">25</text>
+              <text x="30" y="79" className="text-[9px] text-right font-medium fill-muted-foreground" textAnchor="end">{Math.round(chartData.maxVal * 0.75)}</text>
 
               <line x1="40" y1="120" x2="480" y2="120" className="stroke-border stroke-1" strokeDasharray="3 3" />
-              <text x="30" y="124" className="text-[9px] text-right font-medium fill-muted-foreground" textAnchor="end">10</text>
+              <text x="30" y="124" className="text-[9px] text-right font-medium fill-muted-foreground" textAnchor="end">{Math.round(chartData.maxVal * 0.5)}</text>
 
               <line x1="40" y1="165" x2="480" y2="165" className="stroke-border stroke-1" strokeDasharray="3 3" />
-              <text x="30" y="169" className="text-[9px] text-right font-medium fill-muted-foreground" textAnchor="end">5</text>
+              <text x="30" y="169" className="text-[9px] text-right font-medium fill-muted-foreground" textAnchor="end">{Math.round(chartData.maxVal * 0.25)}</text>
 
               <line x1="40" y1="205" x2="480" y2="205" className="stroke-border stroke-1" />
               <text x="30" y="209" className="text-[9px] text-right font-medium fill-muted-foreground" textAnchor="end">0</text>
 
-              {/* Simulated Curve based on actual numbers */}
+              {/* Dynamic Curves based on actual numbers */}
               <polyline
                 fill="none"
                 className="stroke-emerald-500"
                 strokeWidth="2.5"
-                points="40,150 120,130 200,90 280,70 360,50 440,30"
+                points={chartData.processed.map((val, i) => `${40 + i * 88},${205 - (val / chartData.maxVal) * 175}`).join(' ')}
               />
-              <circle cx="440" cy="30" r="4.5" className="fill-emerald-500 stroke-white stroke-2" />
+              {chartData.processed.map((val, i) => (
+                <circle key={`p-${i}`} cx={40 + i * 88} cy={205 - (val / chartData.maxVal) * 175} r="3.5" className="fill-emerald-500 stroke-white stroke-1.5" />
+              ))}
               
               <polyline
                 fill="none"
                 className="stroke-amber-500"
                 strokeWidth="2"
-                points="40,180 120,170 200,160 280,180 360,170 440,165"
+                points={chartData.inProgress.map((val, i) => `${40 + i * 88},${205 - (val / chartData.maxVal) * 175}`).join(' ')}
               />
-              <circle cx="440" cy="165" r="3.5" className="fill-amber-500 stroke-white stroke-1.5" />
+              {chartData.inProgress.map((val, i) => (
+                <circle key={`ip-${i}`} cx={40 + i * 88} cy={205 - (val / chartData.maxVal) * 175} r="3" className="fill-amber-500 stroke-white stroke-1" />
+              ))}
 
               <polyline
                 fill="none"
                 className="stroke-red-500"
                 strokeWidth="2"
-                points="40,200 120,195 200,198 280,185 360,190 440,180"
+                points={chartData.exceptions.map((val, i) => `${40 + i * 88},${205 - (val / chartData.maxVal) * 175}`).join(' ')}
               />
-              <circle cx="440" cy="180" r="3.5" className="fill-red-500 stroke-white stroke-1.5" />
+              {chartData.exceptions.map((val, i) => (
+                <circle key={`ex-${i}`} cx={40 + i * 88} cy={205 - (val / chartData.maxVal) * 175} r="3" className="fill-red-500 stroke-white stroke-1.5" />
+              ))}
 
               {/* X Labels */}
-              <text x="40" y="220" className="text-[9px] font-semibold fill-muted-foreground" textAnchor="middle">Mon</text>
-              <text x="120" y="220" className="text-[9px] font-semibold fill-muted-foreground" textAnchor="middle">Tue</text>
-              <text x="200" y="220" className="text-[9px] font-semibold fill-muted-foreground" textAnchor="middle">Wed</text>
-              <text x="280" y="220" className="text-[9px] font-semibold fill-muted-foreground" textAnchor="middle">Thu</text>
-              <text x="360" y="220" className="text-[9px] font-semibold fill-muted-foreground" textAnchor="middle">Fri</text>
-              <text x="440" y="220" className="text-[9px] font-semibold fill-muted-foreground" textAnchor="middle">Today</text>
+              {chartData.labels.map((label, i) => (
+                <text key={i} x={40 + i * 88} y="220" className="text-[9px] font-semibold fill-muted-foreground" textAnchor="middle">{label}</text>
+              ))}
             </svg>
           </CardContent>
         </Card>
@@ -446,6 +445,7 @@ export default function Dashboard() {
           <CardHeader className="pb-3 flex flex-row items-center justify-between border-b border-border bg-muted/5">
             <div>
               <CardTitle className="text-base font-semibold font-heading select-none">Recent Invoices</CardTitle>
+              <CardDescription className="text-[10px] text-muted-foreground mt-0.5">Click any row to trace its processing path in the flowchart above</CardDescription>
             </div>
             <Link to="/invoices">
               <Button variant="outline" size="sm" className="h-8 text-xs font-semibold gap-1">
@@ -472,18 +472,24 @@ export default function Dashboard() {
                   </thead>
                   <tbody className="divide-y divide-border">
                     {recentInvoices.map((inv) => (
-                      <tr key={inv.invoiceId} className="hover:bg-accent/20 transition-colors">
+                      <tr 
+                        key={inv.invoiceId} 
+                        onClick={() => setSelectedInvoiceId(inv.invoiceId)}
+                        className={`hover:bg-accent/20 transition-colors cursor-pointer ${
+                          selectedInvoiceId === inv.invoiceId ? 'bg-primary/5 font-semibold border-l-2 border-primary' : ''
+                        }`}
+                      >
                         <td className="py-3 px-4 font-semibold text-primary">
-                          <Link to={`/invoices/${inv.invoiceId}`} className="hover:underline flex items-center gap-1">
+                          <div className="flex items-center gap-1">
                             {inv.invoiceId}
                             <ArrowUpRight className="w-3 h-3 text-muted-foreground" />
-                          </Link>
+                          </div>
                         </td>
                         <td className="py-3 px-4 font-medium text-foreground">{inv.vendorName}</td>
                         <td className="py-3 px-4 font-medium">
                           ₹ {inv.totalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                         </td>
-                        <td className="py-3 px-4">
+                        <td className="py-3 px-4" onClick={(e) => e.stopPropagation()}>
                           <StatusBadge status={inv.status} />
                         </td>
                         <td className="py-3 px-4 text-muted-foreground">

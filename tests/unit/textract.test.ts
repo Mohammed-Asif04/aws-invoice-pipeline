@@ -26,21 +26,13 @@ describe('Textract Processor Lambda', () => {
   });
 
   it('successfully extracts data from a document in S3 and updates DynamoDB', async () => {
-    // 1. Mock S3 GetObject to return a dummy file payload
-    const mockS3Stream = {
-      transformToByteArray: async () => new Uint8Array([1, 2, 3, 4]),
-    };
-    s3Mock.on(GetObjectCommand).resolves({
-      Body: mockS3Stream as any,
-    });
-
-    // 2. Mock Textract AnalyzeExpense API
+    // 1. Mock Textract AnalyzeExpense API
     textractMock.on(AnalyzeExpenseCommand).resolves(mockTextractResponse as any);
 
-    // 3. Mock S3 PutObject (raw Textract JSON storage)
+    // 2. Mock S3 PutObject (raw Textract JSON storage)
     s3Mock.on(PutObjectCommand).resolves({});
 
-    // 4. Mock DynamoDB update/put commands
+    // 3. Mock DynamoDB update/put commands
     ddbMock.on(UpdateCommand).resolves({});
     ddbMock.on(PutCommand).resolves({});
 
@@ -55,10 +47,15 @@ describe('Textract Processor Lambda', () => {
 
     const result = await handler(event);
 
-    // Assert S3 was read
-    expect(s3Mock.calls()[0].args[0].input).toEqual({
-      Bucket: 'invoice-pipeline-raw-bucket',
-      Key: 'invoices/sample.pdf',
+    // Assert Textract AnalyzeExpense was invoked with the S3 reference directly
+    expect(textractMock.calls().length).toBe(1);
+    expect(textractMock.calls()[0].args[0].input).toEqual({
+      Document: {
+        S3Object: {
+          Bucket: 'invoice-pipeline-raw-bucket',
+          Name: 'invoices/sample.pdf',
+        },
+      },
     });
 
     // Assert S3 was written with raw output
@@ -66,9 +63,6 @@ describe('Textract Processor Lambda', () => {
     expect(putObjectCalls.length).toBe(1);
     expect(putObjectCalls[0].args[0].input.Bucket).toBe('invoice-pipeline-audit');
     expect(putObjectCalls[0].args[0].input.Key).toBe('textract/inv_101/raw-response.json');
-
-    // Assert Textract AnalyzeExpense was invoked
-    expect(textractMock.calls().length).toBe(1);
 
     // Assert DynamoDB was updated with extracted results
     const updateCalls = ddbMock.calls().filter(c => c.args[0] instanceof UpdateCommand);
@@ -85,9 +79,9 @@ describe('Textract Processor Lambda', () => {
     expect(result.extraction?.overallConfidence).toBeGreaterThan(90);
   });
 
-  it('fails gracefully, records failure audit entry and throws error if S3 fails', async () => {
-    // Mock S3 failure
-    s3Mock.on(GetObjectCommand).rejects(new Error('S3 Access Denied'));
+  it('fails gracefully, records failure audit entry and throws error if S3/Textract fails', async () => {
+    // Mock Textract failure
+    textractMock.on(AnalyzeExpenseCommand).rejects(new Error('Textract Access Denied'));
     ddbMock.on(PutCommand).resolves({});
 
     const event = {
@@ -99,7 +93,7 @@ describe('Textract Processor Lambda', () => {
       status: 'IN_PROGRESS' as const,
     };
 
-    await expect(handler(event)).rejects.toThrow('S3 Access Denied');
+    await expect(handler(event)).rejects.toThrow('Textract Access Denied');
 
     // Verify audit entry for error was created
     const putCalls = ddbMock.calls().filter(c => c.args[0] instanceof PutCommand);

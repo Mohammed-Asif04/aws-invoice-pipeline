@@ -32,15 +32,15 @@ build:
 
 deploy:
 	@echo "Deploying application to AWS..."
-	sam deploy -t infrastructure/template.yaml --config-file $(CURDIR)/samconfig.toml
+	sam deploy -t .aws-sam/build/template.yaml --config-file $(CURDIR)/samconfig.toml
 
 deploy-guided:
 	@echo "Deploying application interactively to AWS..."
-	sam deploy --guided -t infrastructure/template.yaml --config-file $(CURDIR)/samconfig.toml
+	sam deploy --guided -t .aws-sam/build/template.yaml --config-file $(CURDIR)/samconfig.toml
 
 local-api:
 	@echo "Starting local API Gateway..."
-	sam local start-api -t infrastructure/template.yaml
+	sam local start-api -t .aws-sam/build/template.yaml
 
 frontend-dev:
 	@echo "Starting frontend development server..."
@@ -48,7 +48,7 @@ frontend-dev:
 
 test:
 	@echo "Running tests..."
-	@echo "Test execution placeholder"
+	cd tests && pnpm run test
 
 lint:
 	@echo "Linting backend Lambdas..."

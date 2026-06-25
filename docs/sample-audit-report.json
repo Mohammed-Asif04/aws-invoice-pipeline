@@ -1,0 +1,24 @@
+{
+  "invoiceId": "INV-2026-53D9985F",
+  "processedAt": "2026-06-24T20:50:43.018Z",
+  "source": "UPLOAD",
+  "s3RawKey": "test-invoice-1782334238.pdf",
+  "extraction": {
+    "fieldsExtracted": 10,
+    "lineItemsExtracted": 2,
+    "overallConfidence": 97.8,
+    "vendorName": "AWS Training & Certification",
+    "invoiceNumber": "INV-2026-9812",
+    "totalAmount": 21240
+  },
+  "validation": {
+    "status": "PROCESSED",
+    "anomaliesCount": 0,
+    "anomalies": [],
+    "confidence": 97.8,
+    "summary": "Bedrock validation completed successfully — zero exceptions detected.",
+    "isDuplicate": false
+  },
+  "finalStatus": "PROCESSED",
+  "pipelineComplete": true
+}

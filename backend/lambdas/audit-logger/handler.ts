@@ -75,6 +75,21 @@ export async function handler(event: AuditLoggerEvent): Promise<any> {
 // Persist Final Pipeline Results (DynamoDB + S3 Audit)
 // ---------------------------------------------------------------------------
 
+function mapUIFieldToDbField(uiField: string): string {
+  switch (uiField) {
+    case 'Vendor Name': return 'vendorName';
+    case 'GSTIN': return 'gstin';
+    case 'Invoice Number': return 'invoiceNumber';
+    case 'Invoice Date': return 'invoiceDate';
+    case 'Due Date': return 'dueDate';
+    case 'PO Number': return 'poNumber';
+    case 'Total Amount': return 'totalAmount';
+    case 'Subtotal': return 'subtotal';
+    case 'tax': return 'cgst';
+    default: return uiField;
+  }
+}
+
 async function persistPipelineResults(
   event: AuditLoggerEvent
 ): Promise<{ invoiceId: string; s3AuditKey: string; status: string }> {
@@ -87,29 +102,48 @@ async function persistPipelineResults(
   const log = logger.child({ invoiceId });
   const endTimer = log.startTimer('Persisting pipeline results');
 
-  const { extraction, validation } = pipelineState;
+  const { extraction, validation, approvalResult } = pipelineState;
 
   // Build the final invoice record
-  const finalStatus = validation?.status || 'PROCESSED';
+  const finalStatus = approvalResult?.action === 'APPROVE'
+    ? 'PROCESSED'
+    : (validation?.status || 'PROCESSED');
+
+  const corrections: Record<string, any> = {};
+  if (approvalResult && approvalResult.correctedFields) {
+    for (const [key, val] of Object.entries(approvalResult.correctedFields)) {
+      if (!key.startsWith(`${invoiceId}-`)) {
+        continue;
+      }
+      const fieldName = key.replace(`${invoiceId}-`, '');
+      const dbField = mapUIFieldToDbField(fieldName);
+      if (dbField === 'totalAmount' || dbField === 'subtotal') {
+        const numericStr = String(val).replace(/[^0-9.]/g, '');
+        corrections[dbField] = parseFloat(numericStr) || 0;
+      } else {
+        corrections[dbField] = val;
+      }
+    }
+  }
 
   // Update the DynamoDB record with final results
   await updateInvoice(invoiceId, 'PENDING', {
     status: finalStatus,
-    vendorName: extraction?.vendorName || 'Unknown',
+    vendorName: corrections.vendorName || extraction?.vendorName || 'Unknown',
     vendorAddress: extraction?.vendorAddress,
-    gstin: extraction?.gstin,
-    invoiceNumber: extraction?.invoiceNumber || '',
+    gstin: corrections.gstin || extraction?.gstin,
+    invoiceNumber: corrections.invoiceNumber || extraction?.invoiceNumber || '',
     invoiceDate: extraction?.invoiceDate || '',
     dueDate: extraction?.dueDate,
     poNumber: extraction?.poNumber,
     lineItems: extraction?.lineItems || [],
-    subtotal: extraction?.subtotal || 0,
+    subtotal: corrections.subtotal || extraction?.subtotal || 0,
     cgst: extraction?.cgst || 0,
     sgst: extraction?.sgst || 0,
-    totalAmount: extraction?.totalAmount || 0,
+    totalAmount: corrections.totalAmount || extraction?.totalAmount || 0,
     extractionConfidence: validation?.overallConfidence || extraction?.overallConfidence || 0,
     extractedFields: validation?.validatedFields || extraction?.extractedFields || [],
-    anomalies: validation?.anomalies || [],
+    anomalies: finalStatus === 'PROCESSED' ? [] : (validation?.anomalies || []),
   });
 
   // Store comprehensive audit report in S3
@@ -207,6 +241,24 @@ async function logAuditEvent(event: AuditLoggerEvent): Promise<AuditEntry> {
   };
 
   await putAuditEntry(entry);
+
+  if (entry.eventType === 'ERROR') {
+    try {
+      await updateInvoice(event.invoiceId, 'PENDING', {
+        status: 'EXCEPTION',
+        anomalies: [
+          {
+            type: 'LOW_CONFIDENCE_SCORE',
+            description: event.details || event.event || 'Pipeline processing failed',
+            severity: 'HIGH',
+          },
+        ],
+      });
+      logger.info('Updated invoice status to EXCEPTION due to pipeline error', { invoiceId: event.invoiceId });
+    } catch (dbError) {
+      logger.error('Failed to update invoice status on error logging', dbError);
+    }
+  }
 
   logger.info('Audit event logged', {
     invoiceId: event.invoiceId,

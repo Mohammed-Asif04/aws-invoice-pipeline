@@ -31,12 +31,6 @@ describe('Invoice Processing Pipeline Integration', () => {
 
   it('runs the end-to-end local data pipeline flow successfully', async () => {
     // === Setup Mocks for Stage 1: Textract Processor ===
-    const mockS3Stream = {
-      transformToByteArray: async () => new Uint8Array([1, 2, 3]),
-    };
-    s3Mock.on(GetObjectCommand).resolves({
-      Body: mockS3Stream as any,
-    });
     textractMock.on(AnalyzeExpenseCommand).resolves(mockTextractResponse as any);
     s3Mock.on(PutObjectCommand).resolves({});
     ddbMock.on(UpdateCommand).resolves({});
@@ -95,7 +89,7 @@ describe('Invoice Processing Pipeline Integration', () => {
     expect(finalState.validation?.anomalies.length).toBe(0);
 
     // Verify S3, Textract, Bedrock, and DynamoDB SDK interactions
-    expect(s3Mock.calls().length).toBe(2); // 1 getObject, 1 putObject (audit raw response)
+    expect(s3Mock.calls().length).toBe(1); // 1 putObject (audit raw response)
     expect(textractMock.calls().length).toBe(1);
     expect(bedrockMock.calls().length).toBe(1);
 

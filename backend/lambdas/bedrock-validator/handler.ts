@@ -32,7 +32,7 @@ const bedrockClient = new BedrockRuntimeClient({
 });
 
 const BEDROCK_MODEL_ID =
-  process.env.BEDROCK_MODEL_ID || 'anthropic.claude-3-sonnet-20240229-v1:0';
+  process.env.BEDROCK_MODEL_ID || 'anthropic.claude-3-haiku-20240307-v1:0';
 const CONFIDENCE_THRESHOLD = parseFloat(
   process.env.CONFIDENCE_THRESHOLD || '85'
 );
@@ -144,15 +144,7 @@ export async function handler(event: PipelineState): Promise<PipelineState> {
         : undefined,
     };
 
-    // Update DynamoDB
-    await updateInvoice(invoiceId, 'PENDING', {
-      status,
-      anomalies: allAnomalies,
-      extractedFields: validatedFields,
-      extractionConfidence: validationResult.overallConfidence,
-    });
-
-    // Write audit entry
+    // Write DynamoDB update + audit entry in parallel for speed
     const auditEntry: AuditEntry = {
       auditId: uuidv4(),
       invoiceId,
@@ -168,7 +160,16 @@ export async function handler(event: PipelineState): Promise<PipelineState> {
         confidence: String(validationResult.overallConfidence),
       },
     };
-    await putAuditEntry(auditEntry);
+
+    await Promise.all([
+      updateInvoice(invoiceId, 'PENDING', {
+        status,
+        anomalies: allAnomalies,
+        extractedFields: validatedFields,
+        extractionConfidence: validationResult.overallConfidence,
+      }),
+      putAuditEntry(auditEntry),
+    ]);
 
     return {
       ...event,
@@ -275,8 +276,8 @@ async function invokeBedrockValidation(
         accept: 'application/json',
         body: JSON.stringify({
           anthropic_version: 'bedrock-2023-05-31',
-          max_tokens: 2048,
-          temperature: 0.1, // Low temperature for consistent validation
+          max_tokens: 1024,
+          temperature: 0.0, // Zero temperature for deterministic, fast validation
           messages: [
             {
               role: 'user',

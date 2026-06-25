@@ -123,7 +123,15 @@ export function useApprovals(): UseApprovalsReturn {
   const handleApprove = useCallback(async (comment?: string) => {
     if (!selectedId) return;
     try {
-      await approveException(selectedId, editableValues, comment || commentText);
+      // Filter editableValues to only include corrections belonging to the selectedId
+      const filteredValues = Object.entries(editableValues)
+        .filter(([key]) => key.startsWith(`${selectedId}-`))
+        .reduce<Record<string, string>>((acc, [key, val]) => {
+          acc[key] = val;
+          return acc;
+        }, {});
+
+      await approveException(selectedId, filteredValues, comment || commentText);
       updateLocalStatus('Resolved');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Approval failed');
@@ -134,7 +142,7 @@ export function useApprovals(): UseApprovalsReturn {
     if (!selectedId) return;
     try {
       await rejectException(selectedId, reason || commentText);
-      updateLocalStatus('Pending Review');
+      updateLocalStatus('Resolved');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Rejection failed');
     }

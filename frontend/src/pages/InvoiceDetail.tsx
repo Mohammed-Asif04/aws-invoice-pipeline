@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   ChevronLeft,
@@ -10,12 +10,16 @@ import {
   Info,
   ExternalLink,
   ChevronDown,
+  Loader2,
 } from 'lucide-react';
 import { StatusBadge } from '@/components/StatusBadge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import PDFViewer from '@/components/PDFViewer';
 import ExtractedFields from '@/components/ExtractedFields';
+import { ConfidenceScore } from '@/components/ConfidenceScore';
+import { getInvoiceById } from '@/services/invoiceService';
+import { apiClient } from '@/services/api';
 
 type TabType = 'summary' | 'extraction' | 'approval' | 'audit';
 
@@ -79,14 +83,154 @@ export default function InvoiceDetail() {
   const { invoiceId } = useParams();
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<TabType>('summary');
+  const [invoiceData, setInvoiceData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const invoice = invoiceDetailsMock; // In real app, load using invoiceId
+  const formatDate = (dateStr?: string) => {
+    if (!dateStr) return '';
+    try {
+      const d = new Date(dateStr);
+      if (isNaN(d.getTime())) return dateStr;
+      return d.toLocaleDateString('en-IN', {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+      });
+    } catch {
+      return dateStr;
+    }
+  };
+
+  useEffect(() => {
+    if (!invoiceId) return;
+
+    let isMounted = true;
+    const fetchInvoice = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const data = await getInvoiceById(invoiceId);
+        if (!isMounted) return;
+
+        if (data) {
+          // Fetch audit logs directly as well
+          let auditLogs = (data as any).auditLogs || [];
+          if (auditLogs.length === 0) {
+            try {
+              const auditRes = await apiClient.get<{ entries: any[] }>('/audit', { invoiceId });
+              auditLogs = auditRes.entries || [];
+            } catch (err) {
+              console.warn('Failed to fetch direct audit logs', err);
+            }
+          }
+
+          setInvoiceData({
+            ...data,
+            auditLogs,
+          });
+        } else {
+          // Check if fallback mock exists
+          if (invoiceId === 'INV-2025-1246') {
+            setInvoiceData(invoiceDetailsMock);
+          } else {
+            setError('Invoice not found');
+          }
+        }
+      } catch (err) {
+        if (!isMounted) return;
+        if (invoiceId === 'INV-2025-1246') {
+          setInvoiceData(invoiceDetailsMock);
+        } else {
+          setError(err instanceof Error ? err.message : 'Failed to fetch invoice details');
+        }
+      } finally {
+        if (isMounted) setLoading(false);
+      }
+    };
+
+    fetchInvoice();
+    return () => {
+      isMounted = false;
+    };
+  }, [invoiceId]);
+
+  const getConfidenceLabel = (score: number) => {
+    if (score >= 90) return 'High Confidence';
+    if (score >= 70) return 'Medium Confidence';
+    return 'Low Confidence';
+  };
+
+  const mapFieldName = (name: string) => {
+    switch (name) {
+      case 'vendorName': return 'Vendor Name';
+      case 'gstin': return 'GSTIN';
+      case 'invoiceNumber': return 'Invoice Number';
+      case 'invoiceDate': return 'Invoice Date';
+      case 'totalAmount': return 'Total Amount';
+      case 'subtotal': return 'Subtotal';
+      case 'cgst': return 'CGST';
+      case 'sgst': return 'SGST';
+      case 'dueDate': return 'Due Date';
+      case 'poNumber': return 'PO Number';
+      default: return name.charAt(0).toUpperCase() + name.slice(1).replace(/([A-Z])/g, ' $1');
+    }
+  };
+
+  const mapValidationStatus = (status: string) => {
+    switch (status) {
+      case 'MATCHED': return 'Matched';
+      case 'MISMATCH': return 'Mismatch';
+      case 'NOT_FOUND': return 'NotFound';
+      default: return 'Matched';
+    }
+  };
+
+  const invoice = invoiceData ? {
+    ...invoiceData,
+    receivedOn: formatDate(invoiceData.receivedOn || invoiceData.createdAt),
+    invoiceDate: formatDate(invoiceData.invoiceDate),
+    dueDate: formatDate(invoiceData.dueDate),
+    confidenceScore: invoiceData.extractionConfidence || invoiceData.confidenceScore || 90,
+    confidenceLabel: invoiceData.confidenceLabel || getConfidenceLabel(invoiceData.extractionConfidence || 90),
+    extractedFields: (invoiceData.extractedFields && invoiceData.extractedFields.length > 0)
+      ? invoiceData.extractedFields.map((f: any) => ({
+          fieldName: mapFieldName(f.fieldName),
+          extractedValue: f.extractedValue,
+          confidence: f.confidence || 90,
+          validationStatus: mapValidationStatus(f.validationStatus),
+        }))
+      : (invoiceData.extractedFields || [
+          { fieldName: 'Vendor Name', extractedValue: invoiceData.vendorName || 'Not Found', confidence: invoiceData.extractionConfidence || 90, validationStatus: 'Matched' },
+          { fieldName: 'Invoice Number', extractedValue: invoiceData.invoiceNumber || 'Not Found', confidence: invoiceData.extractionConfidence || 90, validationStatus: 'Matched' },
+          { fieldName: 'Invoice Date', extractedValue: formatDate(invoiceData.invoiceDate) || 'Not Found', confidence: invoiceData.extractionConfidence || 90, validationStatus: 'Matched' },
+          { fieldName: 'Total Amount', extractedValue: invoiceData.totalAmount ? `₹ ${invoiceData.totalAmount.toLocaleString('en-IN')}` : 'Not Found', confidence: invoiceData.extractionConfidence || 90, validationStatus: 'Matched' },
+          { fieldName: 'GSTIN', extractedValue: invoiceData.gstin || 'Not Found', confidence: invoiceData.extractionConfidence || 90, validationStatus: 'Matched' },
+          { fieldName: 'PO Number', extractedValue: invoiceData.poNumber || 'Not Found', confidence: invoiceData.extractionConfidence || 90, validationStatus: 'Matched' },
+        ]),
+    approvalHistory: (invoiceData.approvalHistory && invoiceData.approvalHistory.length > 0)
+      ? invoiceData.approvalHistory
+      : (invoiceData.auditLogs || []).map((log: any) => ({
+          step: log.event,
+          timestamp: formatDate(log.timestamp),
+          status: log.eventType === 'rejection' ? 'Rejected' : 'Success',
+          details: log.details || '',
+        })).reverse(),
+    auditLogs: (invoiceData.auditLogs || []).map((log: any) => ({
+      event: log.event,
+      timestamp: formatDate(log.timestamp),
+      path: log.metadata?.s3AuditKey || log.metadata?.s3Key || log.path || '',
+      hash: log.metadata?.hash || log.hash || '',
+      key: log.metadata?.invoiceId || log.invoiceId || '',
+    })),
+  } : null;
 
   const formatCurrency = (amount: number) => {
-    return `₹ ${amount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    return `₹ ${(amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   };
 
   const handleDownloadReport = () => {
+    if (!invoice) return;
     const jsonString = `data:text/json;charset=utf-8,${encodeURIComponent(
       JSON.stringify(invoice, null, 2)
     )}`;
@@ -97,6 +241,38 @@ export default function InvoiceDetail() {
     downloadAnchor.click();
     downloadAnchor.remove();
   };
+
+  if (loading && import.meta.env.VITE_API_BASE_URL) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen text-muted-foreground gap-3">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+        <span className="text-sm font-medium">Loading invoice details...</span>
+      </div>
+    );
+  }
+
+  if (error && !invoice) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen text-muted-foreground gap-4">
+        <div className="text-red-500 font-semibold text-lg">⚠️ Error Loading Invoice</div>
+        <div className="text-sm">{error}</div>
+        <Button variant="outline" onClick={() => navigate('/invoices')} className="text-xs">
+          Back to Invoices
+        </Button>
+      </div>
+    );
+  }
+
+  if (!invoice) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen text-muted-foreground gap-4">
+        <div className="font-semibold text-lg">Invoice Not Found</div>
+        <Button variant="outline" onClick={() => navigate('/invoices')} className="text-xs">
+          Back to Invoices
+        </Button>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen pb-12">
@@ -306,36 +482,19 @@ export default function InvoiceDetail() {
                     AI Validation
                   </CardTitle>
                 </CardHeader>
-                <CardContent className="space-y-3.5">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                    <div>
-                      <span className="text-[10px] text-muted-foreground block uppercase font-bold tracking-wider">
-                        Confidence Score
-                      </span>
-                      <span className="text-3xl font-extrabold text-emerald-500 tracking-tight block mt-1">
-                        {invoice.confidenceScore}%
-                      </span>
-                    </div>
-                    <div>
+                <CardContent className="space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+                    <ConfidenceScore score={invoice.confidenceScore} showProgress={true} className="flex-1 w-full max-w-sm" />
+                    <div className="sm:mt-5 shrink-0">
                       <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
                         {invoice.confidenceLabel}
                       </span>
                     </div>
                   </div>
-                  
-                  {/* Visual Confidence Bar */}
-                  <div className="space-y-1">
-                    <div className="w-full bg-muted rounded-full h-2.5 overflow-hidden">
-                      <div
-                        className="h-full bg-emerald-500 rounded-full transition-all duration-1000"
-                        style={{ width: `${invoice.confidenceScore}%` }}
-                      />
-                    </div>
-                    <p className="text-xs text-muted-foreground pt-1 flex items-center gap-1">
-                      <Info className="w-3.5 h-3.5 text-muted-foreground" />
-                      All key fields extracted and validated successfully.
-                    </p>
-                  </div>
+                  <p className="text-xs text-muted-foreground pt-1 flex items-center gap-1">
+                    <Info className="w-3.5 h-3.5 text-muted-foreground" />
+                    All key fields extracted and validated successfully.
+                  </p>
                 </CardContent>
               </Card>
 
@@ -417,7 +576,7 @@ export default function InvoiceDetail() {
               </CardHeader>
               <CardContent className="p-0">
                 <div className="relative border-l border-border ml-6 my-6 space-y-8">
-                  {invoice.approvalHistory.map((step, idx) => (
+                  {invoice.approvalHistory.map((step: any, idx: number) => (
                     <div key={idx} className="relative pl-6">
                       {/* Timeline Dot */}
                       <span className="absolute -left-3 top-1.5 flex h-6 w-6 items-center justify-center rounded-full bg-emerald-50 text-emerald-600 border border-emerald-200">
@@ -450,7 +609,7 @@ export default function InvoiceDetail() {
               </CardHeader>
               <CardContent className="p-0 text-xs">
                 <div className="divide-y divide-border">
-                  {invoice.auditLogs.map((log, idx) => (
+                  {invoice.auditLogs.map((log: any, idx: number) => (
                     <div key={idx} className="p-4 space-y-2 hover:bg-accent/10 transition-colors">
                       <div className="flex items-center justify-between font-semibold text-foreground">
                         <span>{log.event}</span>
@@ -488,6 +647,8 @@ export default function InvoiceDetail() {
             fileName="abc-inv.pdf"
             title="Invoice Document"
             showOpenInNewTab
+            fallbackMessage="Original document stored in S3"
+            fallbackSubMessage="The PDF is securely stored in the S3 raw bucket and can be accessed via the S3 console."
           />
         </div>
       </div>

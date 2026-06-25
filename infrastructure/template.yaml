@@ -27,7 +27,7 @@ Parameters:
 
   BedrockModelId:
     Type: String
-    Default: anthropic.claude-3-sonnet-20240229-v1:0
+    Default: anthropic.claude-3-haiku-20240307-v1:0
     Description: Bedrock model ID for invoice validation
 
   ConfidenceThreshold:
@@ -41,13 +41,14 @@ Parameters:
 Globals:
   Function:
     Timeout: 120
-    MemorySize: 512
+    MemorySize: 1024
     Runtime: nodejs20.x
     Architectures:
-      - x86_64
+      - arm64
     Environment:
       Variables:
         AWS_NODEJS_CONNECTION_REUSE_ENABLED: '1'
+        NODE_OPTIONS: '--enable-source-maps'
         ENVIRONMENT: !Ref Environment
         INVOICE_TABLE: !Ref InvoiceTable
         AUDIT_TABLE: !Ref AuditTable
@@ -251,8 +252,8 @@ Resources:
       Handler: handler.handler
       CodeUri: ../backend/lambdas/invoice-ingestion/
       Description: Receives invoices via SES/S3/API Gateway, stores PDFs, starts pipeline
-      Timeout: 60
-      MemorySize: 512
+      Timeout: 30
+      MemorySize: 1024
       Environment:
         Variables:
           STATE_MACHINE_ARN: !Sub 'arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:InvoicePipelineStateMachine-${Environment}'
@@ -311,8 +312,8 @@ Resources:
       Handler: handler.handler
       CodeUri: ../backend/lambdas/textract-processor/
       Description: Processes invoice PDFs using Amazon Textract AnalyzeExpense
-      Timeout: 120
-      MemorySize: 1024
+      Timeout: 60
+      MemorySize: 1536
       Policies:
         - S3ReadPolicy:
             BucketName: !Sub 'invoice-pipeline-raw-${AWS::AccountId}'
@@ -348,8 +349,8 @@ Resources:
       Handler: handler.handler
       CodeUri: ../backend/lambdas/bedrock-validator/
       Description: Validates Textract extraction using Amazon Bedrock Claude
-      Timeout: 90
-      MemorySize: 512
+      Timeout: 45
+      MemorySize: 1024
       Environment:
         Variables:
           BEDROCK_MODEL_ID: !Ref BedrockModelId
@@ -384,8 +385,8 @@ Resources:
       Handler: handler.handler
       CodeUri: ../backend/lambdas/approval-handler/
       Description: Handles approve/reject/reprocess actions and serves API endpoints
-      Timeout: 30
-      MemorySize: 256
+      Timeout: 15
+      MemorySize: 512
       Environment:
         Variables:
           APPROVAL_API_URL: !Sub 'https://PLACEHOLDER-API-ID.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
@@ -523,8 +524,8 @@ Resources:
       Handler: handler.handler
       CodeUri: ../backend/lambdas/audit-logger/
       Description: Persists pipeline results and writes audit trail to DynamoDB + S3
-      Timeout: 60
-      MemorySize: 256
+      Timeout: 30
+      MemorySize: 512
       Policies:
         - S3CrudPolicy:
             BucketName: !Ref AuditBucket
@@ -606,10 +607,39 @@ Resources:
         - Key: Project
           Value: aws-invoice-pipeline
 
+  # ---------------------------------------------------------------------------
+  # AWS Amplify Console Frontend Hosting
+  # ---------------------------------------------------------------------------
+
+  AmplifyApp:
+    Type: AWS::Amplify::App
+    Properties:
+      Name: !Sub 'invoice-pipeline-frontend-${Environment}'
+      Description: Frontend dashboard for invoice processing pipeline
+      Tags:
+        - Key: Project
+          Value: aws-invoice-pipeline
+
+  AmplifyBranch:
+    Type: AWS::Amplify::Branch
+    Properties:
+      AppId: !GetAtt AmplifyApp.AppId
+      BranchName: main
+      Description: Main branch for frontend deployment
+      EnableAutoBuild: false
+
 # =============================================================================
 # Outputs
 # =============================================================================
 Outputs:
+  AmplifyAppId:
+    Description: AWS Amplify Application ID
+    Value: !GetAtt AmplifyApp.AppId
+
+  AmplifyURL:
+    Description: Public URL of the frontend dashboard on AWS Amplify
+    Value: !Sub 'https://main.${AmplifyApp.DefaultDomain}'
+
   ApiEndpoint:
     Description: API Gateway endpoint URL
     Value: !Sub 'https://${PipelineApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
