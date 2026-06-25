@@ -191,22 +191,22 @@ export default function InvoiceDetail() {
     receivedOn: formatDate(invoiceData.receivedOn || invoiceData.createdAt),
     invoiceDate: formatDate(invoiceData.invoiceDate),
     dueDate: formatDate(invoiceData.dueDate),
-    confidenceScore: invoiceData.extractionConfidence || invoiceData.confidenceScore || 90,
-    confidenceLabel: invoiceData.confidenceLabel || getConfidenceLabel(invoiceData.extractionConfidence || 90),
+    confidenceScore: invoiceData.extractionConfidence || invoiceData.confidenceScore ?? 90,
+    confidenceLabel: invoiceData.confidenceLabel || getConfidenceLabel(invoiceData.extractionConfidence ?? 90),
     extractedFields: (invoiceData.extractedFields && invoiceData.extractedFields.length > 0)
       ? invoiceData.extractedFields.map((f: any) => ({
           fieldName: mapFieldName(f.fieldName),
           extractedValue: f.extractedValue,
-          confidence: f.confidence || 90,
+          confidence: f.confidence ?? 90,
           validationStatus: mapValidationStatus(f.validationStatus),
         }))
       : (invoiceData.extractedFields || [
-          { fieldName: 'Vendor Name', extractedValue: invoiceData.vendorName || 'Not Found', confidence: invoiceData.extractionConfidence || 90, validationStatus: 'Matched' },
-          { fieldName: 'Invoice Number', extractedValue: invoiceData.invoiceNumber || 'Not Found', confidence: invoiceData.extractionConfidence || 90, validationStatus: 'Matched' },
-          { fieldName: 'Invoice Date', extractedValue: formatDate(invoiceData.invoiceDate) || 'Not Found', confidence: invoiceData.extractionConfidence || 90, validationStatus: 'Matched' },
-          { fieldName: 'Total Amount', extractedValue: invoiceData.totalAmount ? `₹ ${invoiceData.totalAmount.toLocaleString('en-IN')}` : 'Not Found', confidence: invoiceData.extractionConfidence || 90, validationStatus: 'Matched' },
-          { fieldName: 'GSTIN', extractedValue: invoiceData.gstin || 'Not Found', confidence: invoiceData.extractionConfidence || 90, validationStatus: 'Matched' },
-          { fieldName: 'PO Number', extractedValue: invoiceData.poNumber || 'Not Found', confidence: invoiceData.extractionConfidence || 90, validationStatus: 'Matched' },
+          { fieldName: 'Vendor Name', extractedValue: invoiceData.vendorName || 'Not Found', confidence: invoiceData.extractionConfidence ?? 90, validationStatus: 'Matched' },
+          { fieldName: 'Invoice Number', extractedValue: invoiceData.invoiceNumber || 'Not Found', confidence: invoiceData.extractionConfidence ?? 90, validationStatus: 'Matched' },
+          { fieldName: 'Invoice Date', extractedValue: formatDate(invoiceData.invoiceDate) || 'Not Found', confidence: invoiceData.extractionConfidence ?? 90, validationStatus: 'Matched' },
+          { fieldName: 'Total Amount', extractedValue: invoiceData.totalAmount ? `₹ ${invoiceData.totalAmount.toLocaleString('en-IN')}` : 'Not Found', confidence: invoiceData.extractionConfidence ?? 90, validationStatus: 'Matched' },
+          { fieldName: 'GSTIN', extractedValue: invoiceData.gstin || 'Not Found', confidence: invoiceData.extractionConfidence ?? 90, validationStatus: 'Matched' },
+          { fieldName: 'PO Number', extractedValue: invoiceData.poNumber || 'Not Found', confidence: invoiceData.extractionConfidence ?? 90, validationStatus: 'Matched' },
         ]),
     approvalHistory: (invoiceData.approvalHistory && invoiceData.approvalHistory.length > 0)
       ? invoiceData.approvalHistory
@@ -486,14 +486,18 @@ export default function InvoiceDetail() {
                   <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
                     <ConfidenceScore score={invoice.confidenceScore} showProgress={true} className="flex-1 w-full max-w-sm" />
                     <div className="sm:mt-5 shrink-0">
-                      <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                      <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-bold border ${
+                        invoice.confidenceScore >= 90 ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
+                        invoice.confidenceScore >= 70 ? 'bg-amber-50 text-amber-700 border-amber-200' :
+                        'bg-red-50 text-red-700 border-red-200'
+                      }`}>
                         {invoice.confidenceLabel}
                       </span>
                     </div>
                   </div>
-                  <p className="text-xs text-muted-foreground pt-1 flex items-center gap-1">
-                    <Info className="w-3.5 h-3.5 text-muted-foreground" />
-                    All key fields extracted and validated successfully.
+                  <p className={`text-xs pt-1 flex items-center gap-1 ${invoice.status === 'EXCEPTION' ? 'text-red-500' : 'text-muted-foreground'}`}>
+                    <Info className={`w-3.5 h-3.5 ${invoice.status === 'EXCEPTION' ? 'text-red-500' : 'text-muted-foreground'}`} />
+                    {invoice.status === 'EXCEPTION' ? 'AI validation detected anomalies. Human review required.' : 'All key fields extracted and validated successfully.'}
                   </p>
                 </CardContent>
               </Card>

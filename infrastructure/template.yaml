@@ -337,7 +337,11 @@ Resources:
               Action:
                 - bedrock:InvokeModel
                 - bedrock:InvokeModelWithResponseStream
-              Resource: !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/*'
+                - aws-marketplace:ViewSubscriptions
+                - aws-marketplace:Subscribe
+              Resource:
+                - 'arn:aws:bedrock:*::foundation-model/*'
+                - !Sub 'arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/*'
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
@@ -373,7 +377,11 @@ Resources:
               Action:
                 - bedrock:InvokeModel
                 - bedrock:InvokeModelWithResponseStream
-              Resource: !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/*'
+                - aws-marketplace:ViewSubscriptions
+                - aws-marketplace:Subscribe
+              Resource:
+                - 'arn:aws:bedrock:*::foundation-model/*'
+                - !Sub 'arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/*'
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
