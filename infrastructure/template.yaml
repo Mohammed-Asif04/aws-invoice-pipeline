@@ -616,6 +616,10 @@ Resources:
     Properties:
       Name: !Sub 'invoice-pipeline-frontend-${Environment}'
       Description: Frontend dashboard for invoice processing pipeline
+      CustomRules:
+        - Source: '</^[^.]+$|\.(?!(css|gif|ico|jpg|js|png|txt|svg|woff|woff2|ttf|map|json)$)([^.]+$)/>'
+          Target: '/index.html'
+          Status: '200'
       Tags:
         - Key: Project
           Value: aws-invoice-pipeline
