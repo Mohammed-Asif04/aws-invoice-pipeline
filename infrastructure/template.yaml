@@ -27,8 +27,8 @@ Parameters:
 
   BedrockModelId:
     Type: String
-    Default: anthropic.claude-3-haiku-20240307-v1:0
-    Description: Bedrock model ID for invoice validation
+    Default: 'global.anthropic.claude-sonnet-4-6'
+    Description: Bedrock Model ID for fallback extraction
 
   ConfidenceThreshold:
     Type: String
@@ -314,6 +314,9 @@ Resources:
       Description: Processes invoice PDFs using Amazon Textract AnalyzeExpense
       Timeout: 60
       MemorySize: 1536
+      Environment:
+        Variables:
+          BEDROCK_MODEL_ID: !Ref BedrockModelId
       Policies:
         - S3ReadPolicy:
             BucketName: !Sub 'invoice-pipeline-raw-${AWS::AccountId}'
@@ -330,6 +333,11 @@ Resources:
                 - textract:AnalyzeDocument
                 - textract:DetectDocumentText
               Resource: '*'
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+                - bedrock:InvokeModelWithResponseStream
+              Resource: !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/*'
     Metadata:
       BuildMethod: esbuild
       BuildProperties:

@@ -507,16 +507,18 @@ async function handleGetExceptions(
   const limit = parseInt(params.pageSize || '25');
 
   // Fetch invoices with exception-related statuses
-  const [exceptions, inReview, pendingReview] = await Promise.all([
+  const [exceptions, inReview, pendingReview, resolved] = await Promise.all([
     queryInvoicesByStatus('EXCEPTION', limit),
     queryInvoicesByStatus('IN_REVIEW', limit),
     queryInvoicesByStatus('PENDING_REVIEW', limit),
+    queryInvoicesByStatus('RESOLVED', limit),
   ]);
 
   const allExceptions = [
     ...exceptions.items,
     ...inReview.items,
     ...pendingReview.items,
+    ...resolved.items,
   ];
 
   return respond(200, {
@@ -526,7 +528,7 @@ async function handleGetExceptions(
       totalExceptions: allExceptions.length,
       pendingReview: pendingReview.items.length,
       inProgress: inReview.items.length,
-      resolved: 0, // Would need separate query
+      resolved: resolved.items.length,
     },
   });
 }

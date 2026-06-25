@@ -1,5 +1,5 @@
 // useApprovals — Custom hook for exception review workflow
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   getExceptions,
   approveException,
@@ -7,7 +7,6 @@ import {
   reprocessException,
   getExceptionStats,
   type ExceptionItem,
-  type ExceptionFilters,
   type AnomalyStatus,
 } from '@/services/approvalService';
 
@@ -46,7 +45,7 @@ interface UseApprovalsReturn {
 }
 
 export function useApprovals(): UseApprovalsReturn {
-  const [exceptions, setExceptions] = useState<ExceptionItem[]>([]);
+  const [allExceptions, setAllExceptions] = useState<ExceptionItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState('');
@@ -72,31 +71,52 @@ export function useApprovals(): UseApprovalsReturn {
     setLoading(true);
     setError(null);
     try {
-      const filters: ExceptionFilters = {
-        search: searchText || undefined,
-        issueType: issueFilter,
-        status: statusFilter,
-        assignedTo: assigneeFilter,
-      };
-      const data = await getExceptions(filters);
-      setExceptions(data);
-      // Auto-select first item if nothing selected
-      if (!selectedId && data.length > 0) {
-        setSelectedId(data[0].id);
-      }
+      const data = await getExceptions({});
+      setAllExceptions(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch exceptions');
     } finally {
       setLoading(false);
     }
-  }, [searchText, issueFilter, statusFilter, assigneeFilter, selectedId]);
+  }, []);
 
   useEffect(() => {
     fetchExceptions();
   }, [fetchExceptions]);
 
-  const selectedItem = exceptions.find((x) => x.id === selectedId);
-  const stats = getExceptionStats(exceptions);
+  // Apply filters locally on allExceptions
+  const exceptions = useMemo(() => {
+    return allExceptions.filter((item) => {
+      const matchesSearch = !searchText ||
+        item.id.toLowerCase().includes(searchText.toLowerCase()) ||
+        item.vendor.toLowerCase().includes(searchText.toLowerCase()) ||
+        item.issueType.toLowerCase().includes(searchText.toLowerCase());
+      const matchesIssue = !issueFilter || issueFilter === 'All' || item.issueType === issueFilter;
+      const matchesStatus = !statusFilter || statusFilter === 'All' || item.status === statusFilter;
+      const matchesAssignee = !assigneeFilter || assigneeFilter === 'All' || item.assignedTo === assigneeFilter;
+      return matchesSearch && matchesIssue && matchesStatus && matchesAssignee;
+    });
+  }, [allExceptions, searchText, issueFilter, statusFilter, assigneeFilter]);
+
+  // Auto-select first item in the filtered exceptions list if none selected or currently selected is filtered out
+  useEffect(() => {
+    if (exceptions.length > 0) {
+      const exists = exceptions.some((x) => x.id === selectedId);
+      if (!exists) {
+        setSelectedId(exceptions[0].id);
+      }
+    } else {
+      setSelectedId('');
+    }
+  }, [exceptions, selectedId]);
+
+  const selectedItem = useMemo(() => {
+    return allExceptions.find((x) => x.id === selectedId);
+  }, [allExceptions, selectedId]);
+
+  const stats = useMemo(() => {
+    return getExceptionStats(allExceptions);
+  }, [allExceptions]);
 
   const handleEditChange = useCallback((key: string, val: string) => {
     setEditableValues((prev) => ({ ...prev, [key]: val }));
@@ -104,7 +124,7 @@ export function useApprovals(): UseApprovalsReturn {
 
   const updateLocalStatus = useCallback((status: AnomalyStatus) => {
     if (!selectedId) return;
-    setExceptions((prev) =>
+    setAllExceptions((prev) =>
       prev.map((x) =>
         x.id === selectedId
           ? {

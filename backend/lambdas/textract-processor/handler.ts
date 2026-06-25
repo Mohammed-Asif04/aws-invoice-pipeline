@@ -11,7 +11,8 @@ import {
   ExpenseField,
   LineItemGroup,
 } from '@aws-sdk/client-textract';
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
+import { BedrockRuntimeClient, ConverseCommand } from '@aws-sdk/client-bedrock-runtime';
 import { createLogger } from '../shared/logger';
 import { updateInvoice, putAuditEntry } from '../shared/dynamodb';
 import type {
@@ -31,8 +32,12 @@ const textractClient = new TextractClient({
 const s3Client = new S3Client({
   region: process.env.AWS_REGION || 'ap-south-1',
 });
+const bedrockClient = new BedrockRuntimeClient({
+  region: process.env.AWS_REGION || 'ap-south-1',
+});
 
 const AUDIT_BUCKET = process.env.AUDIT_BUCKET || 'invoice-pipeline-audit';
+const BEDROCK_MODEL_ID = process.env.BEDROCK_MODEL_ID || 'anthropic.claude-3-haiku-20240307-v1:0';
 
 // ---------------------------------------------------------------------------
 // Field name mappings for Textract AnalyzeExpense
@@ -71,6 +76,9 @@ export async function handler(event: PipelineState): Promise<PipelineState> {
   try {
     // Call Textract AnalyzeExpense passing S3 object directly
     let textractResponse;
+    let extraction: TextractExtractionResult;
+    let isBedrockFallback = false;
+
     try {
       textractResponse = await textractClient.send(
         new AnalyzeExpenseCommand({
@@ -89,11 +97,17 @@ export async function handler(event: PipelineState): Promise<PipelineState> {
         textractError.message?.includes('subscription') ||
         textractError.message?.includes('SubscriptionRequiredException')
       ) {
-        log.warn('Textract subscription missing, falling back to simulated extraction for demo/audit purposes', {
+        log.warn('Textract subscription missing, falling back to dynamic Bedrock Claude extraction', {
           errorName: textractError.name,
           errorMessage: textractError.message,
         });
-        textractResponse = getMockTextractResponse();
+        isBedrockFallback = true;
+        const bedrockResult = await extractInvoiceWithBedrock(s3Bucket, s3Key, invoiceId);
+        extraction = buildExtractionResultFromBedrock(bedrockResult, invoiceId, s3Key);
+        textractResponse = {
+          source: 'bedrock-fallback',
+          bedrockResult,
+        };
       } else {
         throw textractError;
       }
@@ -101,12 +115,14 @@ export async function handler(event: PipelineState): Promise<PipelineState> {
 
     endTimer();
 
-    // Parse the Textract response
-    const extraction = parseTextractResponse(
-      invoiceId,
-      s3Key,
-      textractResponse.ExpenseDocuments || []
-    );
+    if (!isBedrockFallback) {
+      // Parse the Textract response
+      extraction = parseTextractResponse(
+        invoiceId,
+        s3Key,
+        textractResponse.ExpenseDocuments || []
+      );
+    }
 
     log.info('Textract extraction complete', {
       fieldsExtracted: extraction.extractedFields.length,
@@ -354,77 +370,270 @@ function parseAmount(value: string | undefined): number {
   return isNaN(amount) ? 0 : Math.round(amount * 100) / 100;
 }
 
-function getMockTextractResponse() {
-  return {
-    ExpenseDocuments: [
-      {
-        SummaryFields: [
-          {
-            Type: { Text: 'VENDOR_NAME' },
-            ValueDetection: { Text: 'AWS Training & Certification', Confidence: 99.0 },
-          },
-          {
-            Type: { Text: 'VENDOR_ADDRESS' },
-            ValueDetection: { Text: '123 Cloud Way, Bangalore, KA, 560001', Confidence: 95.0 },
-          },
-          {
-            Type: { Text: 'INVOICE_RECEIPT_ID' },
-            ValueDetection: { Text: 'INV-2026-9812', Confidence: 98.0 },
-          },
-          {
-            Type: { Text: 'INVOICE_RECEIPT_DATE' },
-            ValueDetection: { Text: '2026-06-25', Confidence: 99.0 },
-          },
-          {
-            Type: { Text: 'DUE_DATE' },
-            ValueDetection: { Text: '2026-07-25', Confidence: 97.0 },
-          },
-          {
-            Type: { Text: 'PO_NUMBER' },
-            ValueDetection: { Text: 'PO-991283', Confidence: 96.0 },
-          },
-          {
-            Type: { Text: 'TAX_PAYER_ID' },
-            ValueDetection: { Text: '29AAAAA1111A1Z1', Confidence: 99.0 },
-          },
-          {
-            Type: { Text: 'SUBTOTAL' },
-            ValueDetection: { Text: '₹18,000.00', Confidence: 98.0 },
-          },
-          {
-            Type: { Text: 'TAX' },
-            ValueDetection: { Text: '₹3,240.00', Confidence: 98.0 },
-          },
-          {
-            Type: { Text: 'TOTAL' },
-            ValueDetection: { Text: '₹21,240.00', Confidence: 99.0 },
-          },
-        ],
-        LineItemGroups: [
-          {
-            LineItems: [
-              {
-                LineItemExpenseFields: [
-                  { Type: { Text: 'DESCRIPTION' }, ValueDetection: { Text: 'AWS Solutions Architect Associate Course' } },
-                  { Type: { Text: 'PRODUCT_CODE' }, ValueDetection: { Text: '998311' } },
-                  { Type: { Text: 'QUANTITY' }, ValueDetection: { Text: '1' } },
-                  { Type: { Text: 'UNIT_PRICE' }, ValueDetection: { Text: '₹15,000.00' } },
-                  { Type: { Text: 'AMOUNT' }, ValueDetection: { Text: '₹15,000.00' } },
-                ],
-              },
-              {
-                LineItemExpenseFields: [
-                  { Type: { Text: 'DESCRIPTION' }, ValueDetection: { Text: 'AWS Advanced Networking Speciality Practice Exam' } },
-                  { Type: { Text: 'PRODUCT_CODE' }, ValueDetection: { Text: '998312' } },
-                  { Type: { Text: 'QUANTITY' }, ValueDetection: { Text: '2' } },
-                  { Type: { Text: 'UNIT_PRICE' }, ValueDetection: { Text: '₹1,500.00' } },
-                  { Type: { Text: 'AMOUNT' }, ValueDetection: { Text: '₹3,000.00' } },
-                ],
-              },
-            ],
-          },
-        ],
+// ---------------------------------------------------------------------------
+// Bedrock Converse API — Dynamic Invoice Extraction (Textract fallback)
+// ---------------------------------------------------------------------------
+
+interface BedrockExtractedInvoice {
+  vendorName: string;
+  vendorAddress: string;
+  gstin: string;
+  invoiceNumber: string;
+  invoiceDate: string;
+  dueDate: string;
+  poNumber: string;
+  subtotal: number;
+  cgst: number;
+  sgst: number;
+  totalAmount: number;
+  currency: string;
+  lineItems: Array<{
+    description: string;
+    hsnSac: string;
+    quantity: number;
+    unitPrice: number;
+    amount: number;
+  }>;
+  confidence: number;
+}
+
+async function extractInvoiceWithBedrock(
+  s3Bucket: string,
+  s3Key: string,
+  invoiceId: string
+): Promise<BedrockExtractedInvoice> {
+  const log = logger.child({ invoiceId, method: 'extractInvoiceWithBedrock' });
+
+  // 1. Download the document from S3
+  log.info('Downloading document from S3 for Bedrock extraction', { s3Bucket, s3Key });
+  const s3Response = await s3Client.send(
+    new GetObjectCommand({ Bucket: s3Bucket, Key: s3Key })
+  );
+  const bodyBytes = await s3Response.Body?.transformToByteArray();
+  if (!bodyBytes || bodyBytes.length === 0) {
+    throw new Error(`Failed to download document from S3: ${s3Bucket}/${s3Key}`);
+  }
+
+  // 2. Detect the file format from the S3 key extension
+  const extension = s3Key.split('.').pop()?.toLowerCase() || '';
+  const isPdf = extension === 'pdf';
+  const imageFormats: Record<string, string> = {
+    png: 'png',
+    jpg: 'jpeg',
+    jpeg: 'jpeg',
+    gif: 'gif',
+    webp: 'webp',
+  };
+
+  // 3. Build the Converse API content block
+  let documentContent: any;
+  if (isPdf) {
+    documentContent = {
+      document: {
+        format: 'pdf',
+        name: `invoice-${invoiceId}`,
+        source: {
+          bytes: bodyBytes,
+        },
       },
-    ],
+    };
+  } else if (imageFormats[extension]) {
+    documentContent = {
+      image: {
+        format: imageFormats[extension],
+        source: {
+          bytes: bodyBytes,
+        },
+      },
+    };
+  } else {
+    // Default to PDF for unknown extensions
+    documentContent = {
+      document: {
+        format: 'pdf',
+        name: `invoice-${invoiceId}`,
+        source: {
+          bytes: bodyBytes,
+        },
+      },
+    };
+  }
+
+  const extractionPrompt = `You are an expert invoice data extraction system. Analyze the provided invoice document and extract ALL fields accurately.
+
+IMPORTANT RULES:
+- Extract EXACTLY what is written in the document. Do NOT invent, guess, or hallucinate any data.
+- If a field is not present in the document, return an empty string "" for text fields or 0 for numeric fields.
+- For GSTIN: Only extract if you see a valid 15-character Indian GSTIN (format: 2 digits + 5 letters + 4 digits + 1 letter + 1 alphanumeric + Z + 1 alphanumeric). If no GSTIN is present, return "".
+- For amounts: Extract the exact numeric values shown. Remove currency symbols but preserve the actual numbers.
+- For line items: Extract every line item row visible in the invoice.
+
+Return ONLY a valid JSON object with this exact structure (no markdown, no explanation, no extra text):
+
+{
+  "vendorName": "<exact vendor/company name from invoice>",
+  "vendorAddress": "<full vendor address if present>",
+  "gstin": "<15-char GSTIN if present, otherwise empty string>",
+  "invoiceNumber": "<invoice number/ID>",
+  "invoiceDate": "<invoice date in YYYY-MM-DD format>",
+  "dueDate": "<due date in YYYY-MM-DD format if present>",
+  "poNumber": "<PO number if present>",
+  "subtotal": <numeric subtotal before tax>,
+  "cgst": <numeric CGST amount>,
+  "sgst": <numeric SGST amount>,
+  "totalAmount": <numeric grand total>,
+  "currency": "INR",
+  "lineItems": [
+    {
+      "description": "<item description>",
+      "hsnSac": "<HSN/SAC code if present>",
+      "quantity": <numeric quantity>,
+      "unitPrice": <numeric unit price>,
+      "amount": <numeric line total>
+    }
+  ],
+  "confidence": <number 0-100 representing your confidence in the extraction accuracy>
+}`;
+
+  // 4. Call Bedrock Converse API
+  log.info('Invoking Bedrock Converse API for document extraction', { modelId: BEDROCK_MODEL_ID });
+
+  const converseResponse = await bedrockClient.send(
+    new ConverseCommand({
+      modelId: BEDROCK_MODEL_ID,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            documentContent,
+            { text: extractionPrompt },
+          ],
+        },
+      ],
+      inferenceConfig: {
+        maxTokens: 4096,
+        temperature: 0.0,
+      },
+    })
+  );
+
+  // 5. Parse the response
+  const outputContent = converseResponse.output?.message?.content;
+  if (!outputContent || outputContent.length === 0) {
+    throw new Error('Empty response from Bedrock Converse API');
+  }
+
+  const responseText = outputContent
+    .filter((block: any) => block.text)
+    .map((block: any) => block.text)
+    .join('');
+
+  log.info('Bedrock extraction response received', {
+    responseLength: responseText.length,
+    responsePreview: responseText.substring(0, 200),
+  });
+
+  // 6. Parse JSON from response
+  try {
+    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      throw new Error('No JSON object found in Bedrock response');
+    }
+
+    const parsed = JSON.parse(jsonMatch[0]) as BedrockExtractedInvoice;
+
+    log.info('Bedrock extraction parsed successfully', {
+      vendorName: parsed.vendorName,
+      totalAmount: parsed.totalAmount,
+      gstin: parsed.gstin || '(not found)',
+      lineItemsCount: parsed.lineItems?.length || 0,
+      confidence: parsed.confidence,
+    });
+
+    return parsed;
+  } catch (parseError) {
+    log.error('Failed to parse Bedrock extraction response', {
+      error: String(parseError),
+      responseText: responseText.substring(0, 500),
+    });
+    throw new Error(`Failed to parse Bedrock extraction: ${parseError}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Build TextractExtractionResult from Bedrock extracted data
+// ---------------------------------------------------------------------------
+
+function buildExtractionResultFromBedrock(
+  bedrockResult: BedrockExtractedInvoice,
+  invoiceId: string,
+  s3RawKey: string
+): TextractExtractionResult {
+  const confidence = bedrockResult.confidence || 85;
+
+  // Build extracted fields array for audit/display
+  const extractedFields: ExtractedField[] = [];
+  const fieldMap: Record<string, string> = {
+    vendorName: bedrockResult.vendorName || '',
+    vendorAddress: bedrockResult.vendorAddress || '',
+    gstin: bedrockResult.gstin || '',
+    invoiceNumber: bedrockResult.invoiceNumber || '',
+    invoiceDate: bedrockResult.invoiceDate || '',
+    dueDate: bedrockResult.dueDate || '',
+    poNumber: bedrockResult.poNumber || '',
+    subtotal: String(bedrockResult.subtotal || 0),
+    totalAmount: String(bedrockResult.totalAmount || 0),
+  };
+
+  for (const [fieldName, value] of Object.entries(fieldMap)) {
+    extractedFields.push({
+      fieldName,
+      extractedValue: value,
+      confidence,
+      validationStatus: 'PENDING',
+    });
+  }
+
+  // Build line items
+  const lineItems: LineItem[] = (bedrockResult.lineItems || []).map((item) => ({
+    description: item.description || '',
+    hsnSac: item.hsnSac || '',
+    quantity: item.quantity || 1,
+    unitPrice: item.unitPrice || 0,
+    amount: item.amount || 0,
+  }));
+
+  // Calculate tax split if not provided
+  const subtotal = bedrockResult.subtotal || 0;
+  const totalAmount = bedrockResult.totalAmount || 0;
+  let cgst = bedrockResult.cgst || 0;
+  let sgst = bedrockResult.sgst || 0;
+
+  // If cgst/sgst are both 0 but total > subtotal, derive tax
+  if (cgst === 0 && sgst === 0 && totalAmount > subtotal && subtotal > 0) {
+    const totalTax = totalAmount - subtotal;
+    cgst = Math.round((totalTax / 2) * 100) / 100;
+    sgst = Math.round((totalTax / 2) * 100) / 100;
+  }
+
+  return {
+    invoiceId,
+    s3RawKey,
+    extractedFields,
+    lineItems,
+    vendorName: bedrockResult.vendorName || '',
+    vendorAddress: bedrockResult.vendorAddress || undefined,
+    gstin: bedrockResult.gstin || '',
+    invoiceDate: bedrockResult.invoiceDate || '',
+    dueDate: bedrockResult.dueDate || undefined,
+    poNumber: bedrockResult.poNumber || undefined,
+    invoiceNumber: bedrockResult.invoiceNumber || '',
+    subtotal,
+    cgst,
+    sgst,
+    totalAmount: totalAmount || subtotal + cgst + sgst,
+    currency: bedrockResult.currency || 'INR',
+    overallConfidence: confidence,
   };
 }
+
