@@ -177,7 +177,8 @@ export async function queryInvoicesByStatus(
  */
 export async function findDuplicateInvoice(
   invoiceNumber: string,
-  vendorName: string
+  vendorName: string,
+  currentInvoiceId?: string
 ): Promise<InvoiceRecord | null> {
   const result = await docClient.send(
     new QueryCommand({
@@ -192,14 +193,18 @@ export async function findDuplicateInvoice(
       ExpressionAttributeValues: {
         ':invoiceNumber': invoiceNumber,
         ':vendorName': vendorName,
-      },
-      Limit: 1,
+      }
     })
   );
 
-  return result.Items && result.Items.length > 0
-    ? (result.Items[0] as InvoiceRecord)
-    : null;
+  if (!result.Items || result.Items.length === 0) return null;
+  
+  if (currentInvoiceId) {
+    const duplicate = result.Items.find(item => item.invoiceId !== currentInvoiceId);
+    return duplicate ? (duplicate as InvoiceRecord) : null;
+  }
+  
+  return result.Items[0] as InvoiceRecord;
 }
 
 /**

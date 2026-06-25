@@ -203,9 +203,9 @@ async function checkDuplicateInvoice(
 ): Promise<Anomaly | null> {
   if (!invoiceNumber) return null;
 
-  const existing = await findDuplicateInvoice(invoiceNumber, vendorName);
+  const existing = await findDuplicateInvoice(invoiceNumber, vendorName, currentInvoiceId);
 
-  if (existing && existing.invoiceId !== currentInvoiceId) {
+  if (existing) {
     return {
       type: 'DUPLICATE_INVOICE',
       description: `Invoice number "${invoiceNumber}" from vendor "${vendorName}" already exists as ${existing.invoiceId} (received ${existing.receivedOn}).`,
