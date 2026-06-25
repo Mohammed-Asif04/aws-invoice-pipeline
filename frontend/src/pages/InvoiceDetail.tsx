@@ -191,7 +191,7 @@ export default function InvoiceDetail() {
     receivedOn: formatDate(invoiceData.receivedOn || invoiceData.createdAt),
     invoiceDate: formatDate(invoiceData.invoiceDate),
     dueDate: formatDate(invoiceData.dueDate),
-    confidenceScore: invoiceData.extractionConfidence || invoiceData.confidenceScore ?? 90,
+    confidenceScore: (invoiceData.extractionConfidence ?? invoiceData.confidenceScore) ?? 90,
     confidenceLabel: invoiceData.confidenceLabel || getConfidenceLabel(invoiceData.extractionConfidence ?? 90),
     extractedFields: (invoiceData.extractedFields && invoiceData.extractedFields.length > 0)
       ? invoiceData.extractedFields.map((f: any) => ({
@@ -204,7 +204,7 @@ export default function InvoiceDetail() {
           { fieldName: 'Vendor Name', extractedValue: invoiceData.vendorName || 'Not Found', confidence: invoiceData.extractionConfidence ?? 90, validationStatus: 'Matched' },
           { fieldName: 'Invoice Number', extractedValue: invoiceData.invoiceNumber || 'Not Found', confidence: invoiceData.extractionConfidence ?? 90, validationStatus: 'Matched' },
           { fieldName: 'Invoice Date', extractedValue: formatDate(invoiceData.invoiceDate) || 'Not Found', confidence: invoiceData.extractionConfidence ?? 90, validationStatus: 'Matched' },
-          { fieldName: 'Total Amount', extractedValue: invoiceData.totalAmount ? `₹ ${invoiceData.totalAmount.toLocaleString('en-IN')}` : 'Not Found', confidence: invoiceData.extractionConfidence ?? 90, validationStatus: 'Matched' },
+          { fieldName: 'Total Amount', extractedValue: invoiceData.totalAmount ? `₹ ${Number(invoiceData.totalAmount).toLocaleString('en-IN')}` : 'Not Found', confidence: invoiceData.extractionConfidence ?? 90, validationStatus: 'Matched' },
           { fieldName: 'GSTIN', extractedValue: invoiceData.gstin || 'Not Found', confidence: invoiceData.extractionConfidence ?? 90, validationStatus: 'Matched' },
           { fieldName: 'PO Number', extractedValue: invoiceData.poNumber || 'Not Found', confidence: invoiceData.extractionConfidence ?? 90, validationStatus: 'Matched' },
         ]),
@@ -213,7 +213,7 @@ export default function InvoiceDetail() {
       : (invoiceData.auditLogs || []).map((log: any) => ({
           step: log.event,
           timestamp: formatDate(log.timestamp),
-          status: log.eventType === 'rejection' ? 'Rejected' : 'Success',
+          status: log.eventType === 'ERROR' || log.eventType === 'rejection' ? 'Rejected' : 'Success',
           details: log.details || '',
         })).reverse(),
     auditLogs: (invoiceData.auditLogs || []).map((log: any) => ({
@@ -225,8 +225,9 @@ export default function InvoiceDetail() {
     })),
   } : null;
 
-  const formatCurrency = (amount: number) => {
-    return `₹ ${(amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const formatCurrency = (amount: any) => {
+    const num = Number(amount) || 0;
+    return `₹ ${num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   };
 
   const handleDownloadReport = () => {
