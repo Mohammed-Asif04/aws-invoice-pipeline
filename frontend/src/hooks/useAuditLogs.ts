@@ -3,28 +3,7 @@ import { useState, useEffect, useCallback } from 'react';
 import type { AuditEntry } from '@/types';
 import { apiClient } from '@/services/api';
 
-// ─── Mock Data (Fallback) ─────────────────────────────────────────
-
-const mockAuditLogs: AuditEntry[] = [
-  {
-    id: 'AUD-001', invoiceId: 'INV-2025-1246', event: 'Invoice Ingested via SES',
-    eventType: 'ingestion', timestamp: '2025-05-18T10:23:00Z', user: 'System (SES)',
-    details: 'PDF attachment extracted from inbound email and stored in S3 raw bucket.',
-    metadata: { s3Key: 's3://invoices-raw-bucket-prod/2025/05/18/abc-inv.pdf', sender: 'billing@abcsolutions.com' },
-  },
-  {
-    id: 'AUD-002', invoiceId: 'INV-2025-1246', event: 'Textract Extraction Completed',
-    eventType: 'extraction', timestamp: '2025-05-18T10:23:12Z', user: 'System (Lambda)',
-    details: 'Amazon Textract AnalyzeExpense processed document. 6 key fields extracted with 98% avg confidence.',
-    metadata: { s3Key: 's3://invoices-audit-bucket-prod/2025/05/18/abc-inv_textract.json', pages: '1', confidence: '98%' },
-  },
-  {
-    id: 'AUD-003', invoiceId: 'INV-2025-1246', event: 'Bedrock Validation Passed',
-    eventType: 'validation', timestamp: '2025-05-18T10:23:18Z', user: 'System (Bedrock)',
-    details: 'Claude 3 validated all fields. No anomalies detected. Overall confidence: 92%.',
-    metadata: { model: 'anthropic.claude-3-sonnet', anomalies: '0', confidence: '92%' },
-  },
-];
+// Removed mock data per user request
 
 // Helper to map backend audit logs to frontend AuditEntry
 function mapBackendAuditToFrontend(audit: any): AuditEntry {
@@ -82,17 +61,7 @@ interface UseAuditLogsReturn {
 
 async function fetchAuditLogs(filters: AuditLogFilters): Promise<AuditEntry[]> {
   if (!import.meta.env.VITE_API_BASE_URL) {
-    // Return mock data
-    return mockAuditLogs.filter((log) => {
-      const matchesSearch = !filters.search ||
-        log.invoiceId.toLowerCase().includes(filters.search.toLowerCase()) ||
-        log.event.toLowerCase().includes(filters.search.toLowerCase()) ||
-        log.details.toLowerCase().includes(filters.search.toLowerCase()) ||
-        log.user.toLowerCase().includes(filters.search.toLowerCase());
-      const matchesType = !filters.eventType || filters.eventType === 'All' || log.eventType === filters.eventType;
-      const matchesInvoice = !filters.invoiceId || log.invoiceId === filters.invoiceId;
-      return matchesSearch && matchesType && matchesInvoice;
-    });
+    throw new Error('API Base URL is missing. Cannot fetch audit logs.');
   }
 
   // Real API calls

@@ -32,73 +32,7 @@ export function mapBackendStatusToUI(status: string): InvoiceStatus {
 
 // ─── Mock Data (Fallback) ─────────────────────────────────────────
 
-const mockInvoicesRaw: Invoice[] = [
-  {
-    invoiceId: 'INV-2025-1246', vendorName: 'ABC Solutions Ltd.', invoiceDate: '2025-05-18',
-    totalAmount: 124500.00, currency: 'INR', status: 'Processed' as InvoiceStatus,
-    receivedOn: '2025-05-18T10:23:00Z', extractionConfidence: 98,
-    lineItems: [], subtotal: 105508.47, cgst: 9495.76, sgst: 9495.76,
-    anomalies: [], createdAt: '2025-05-18T10:23:00Z', invoiceNumber: 'INV-2025-1246',
-  },
-  {
-    invoiceId: 'INV-2025-1245', vendorName: 'TechCorp India', invoiceDate: '2025-05-18',
-    totalAmount: 98750.00, currency: 'INR', status: 'In Review' as InvoiceStatus,
-    receivedOn: '2025-05-18T09:15:00Z', extractionConfidence: 89,
-    lineItems: [], subtotal: 83686.44, cgst: 7531.78, sgst: 7531.78,
-    anomalies: [], createdAt: '2025-05-18T09:15:00Z', invoiceNumber: 'INV-2025-1245',
-  },
-  {
-    invoiceId: 'INV-2025-1244', vendorName: 'Global Supplies', invoiceDate: '2025-05-18',
-    totalAmount: 245000.00, currency: 'INR', status: 'Processed' as InvoiceStatus,
-    receivedOn: '2025-05-18T08:42:00Z', extractionConfidence: 96,
-    lineItems: [], subtotal: 207627.12, cgst: 18686.44, sgst: 18686.44,
-    anomalies: [], createdAt: '2025-05-18T08:42:00Z', invoiceNumber: 'INV-2025-1244',
-  },
-  {
-    invoiceId: 'INV-2025-1243', vendorName: 'Office Needs Co.', invoiceDate: '2025-05-17',
-    totalAmount: 15680.00, currency: 'INR', status: 'Exception' as InvoiceStatus,
-    receivedOn: '2025-05-17T18:31:00Z', extractionConfidence: 78,
-    lineItems: [], subtotal: 13288.14, cgst: 1195.93, sgst: 1195.93,
-    anomalies: [{ type: 'Missing GSTIN' as const, description: 'Vendor GSTIN is missing in document', severity: 'HIGH' as const }],
-    createdAt: '2025-05-17T18:31:00Z', invoiceNumber: 'INV-2025-1243',
-  },
-  {
-    invoiceId: 'INV-2025-1242', vendorName: 'Digital Services', invoiceDate: '2025-05-17',
-    totalAmount: 75000.00, currency: 'INR', status: 'Processed' as InvoiceStatus,
-    receivedOn: '2025-05-17T17:12:00Z', extractionConfidence: 95,
-    lineItems: [], subtotal: 63559.32, cgst: 5720.34, sgst: 5720.34,
-    anomalies: [], createdAt: '2025-05-17T17:12:00Z', invoiceNumber: 'INV-2025-1242',
-  },
-  {
-    invoiceId: 'INV-2025-1241', vendorName: 'BufferOn Pvt. Ltd.', invoiceDate: '2025-05-17',
-    totalAmount: 110000.00, currency: 'INR', status: 'In Review' as InvoiceStatus,
-    receivedOn: '2025-05-17T16:05:00Z', extractionConfidence: 91,
-    lineItems: [], subtotal: 93220.34, cgst: 8389.83, sgst: 8389.83,
-    anomalies: [], createdAt: '2025-05-17T16:05:00Z', invoiceNumber: 'INV-2025-1241',
-  },
-  {
-    invoiceId: 'INV-2025-1240', vendorName: 'Info Systems', invoiceDate: '2025-05-16',
-    totalAmount: 18600.00, currency: 'INR', status: 'Processed' as InvoiceStatus,
-    receivedOn: '2025-05-16T15:20:00Z', extractionConfidence: 97,
-    lineItems: [], subtotal: 15762.71, cgst: 1418.64, sgst: 1418.64,
-    anomalies: [], createdAt: '2025-05-16T15:20:00Z', invoiceNumber: 'INV-2025-1240',
-  },
-  {
-    invoiceId: 'INV-2025-1239', vendorName: 'Data Experts', invoiceDate: '2025-05-16',
-    totalAmount: 56000.00, currency: 'INR', status: 'Exception' as InvoiceStatus,
-    receivedOn: '2025-05-16T14:11:00Z', extractionConfidence: 74,
-    lineItems: [], subtotal: 47457.63, cgst: 4271.19, sgst: 4271.19,
-    anomalies: [{ type: 'Amount Mismatch' as const, description: 'Calculated line items total does not match final total', severity: 'HIGH' as const }],
-    createdAt: '2025-05-16T14:11:00Z', invoiceNumber: 'INV-2025-1239',
-  },
-  {
-    invoiceId: 'INV-2025-1238', vendorName: 'Office Needs Co.', invoiceDate: '2025-05-16',
-    totalAmount: 32450.00, currency: 'INR', status: 'Processed' as InvoiceStatus,
-    receivedOn: '2025-05-16T13:43:00Z', extractionConfidence: 94,
-    lineItems: [], subtotal: 27500.00, cgst: 2475.00, sgst: 2475.00,
-    anomalies: [], createdAt: '2025-05-16T13:43:00Z', invoiceNumber: 'INV-2025-1238',
-  },
-];
+// Removed mock invoices per user request
 
 // ─── Service Functions ───────────────────────────────────────────
 
@@ -138,55 +72,7 @@ export async function getInvoices(
   filters: InvoiceFilters = {}
 ): Promise<PaginatedResult<Invoice>> {
   if (!import.meta.env.VITE_API_BASE_URL) {
-    // Local mock fallback logic
-    let result = [...mockInvoicesRaw] as Invoice[];
-
-    if (filters.search) {
-      const s = filters.search.toLowerCase();
-      result = result.filter(
-        (inv) =>
-          inv.invoiceId.toLowerCase().includes(s) ||
-          inv.vendorName.toLowerCase().includes(s) ||
-          inv.invoiceNumber.toLowerCase().includes(s)
-      );
-    }
-
-    if (filters.status && filters.status !== 'All Status') {
-      result = result.filter((inv) => inv.status === filters.status);
-    }
-
-    if (filters.vendor && filters.vendor !== 'All Vendors') {
-      result = result.filter((inv) => inv.vendorName === filters.vendor);
-    }
-
-    // Sort
-    const sortField = (filters.sortField || 'receivedOn') as keyof Invoice;
-    const sortOrder = filters.sortOrder || 'desc';
-    result.sort((a, b) => {
-      let aVal: any = a[sortField];
-      let bVal: any = b[sortField];
-      if (sortField === 'invoiceDate' || sortField === 'receivedOn') {
-        aVal = new Date(aVal).getTime();
-        bVal = new Date(bVal).getTime();
-      }
-      if (aVal < bVal) return sortOrder === 'asc' ? -1 : 1;
-      if (aVal > bVal) return sortOrder === 'asc' ? 1 : -1;
-      return 0;
-    });
-
-    const page = filters.page || 1;
-    const pageSize = filters.pageSize || 10;
-    const total = result.length;
-    const start = (page - 1) * pageSize;
-    const data = result.slice(start, start + pageSize);
-
-    return {
-      data,
-      total,
-      page,
-      pageSize,
-      totalPages: Math.ceil(total / pageSize),
-    };
+    throw new Error('API Base URL is missing. Cannot fetch invoices.');
   }
 
   // Real API Gateway Request
@@ -252,7 +138,7 @@ export async function getInvoices(
 
 export async function getInvoiceById(id: string): Promise<Invoice | null> {
   if (!import.meta.env.VITE_API_BASE_URL) {
-    return (mockInvoicesRaw as Invoice[]).find((inv) => inv.invoiceId === id) || null;
+    throw new Error('API Base URL is missing. Cannot fetch invoice by ID.');
   }
 
   const response = await apiClient.get<{ invoice: any; auditLogs: any[] }>(`/invoices/${id}`);
@@ -270,36 +156,7 @@ export async function uploadInvoice(
   metadata?: Record<string, string>
 ): Promise<{ invoiceId: string; status: string }> {
   if (!import.meta.env.VITE_API_BASE_URL) {
-    await new Promise((res) => setTimeout(res, 1000));
-    const newId = `INV-2025-${Math.floor(Math.random() * 9000) + 1000}`;
-    const newInvoice: Invoice = {
-      invoiceId: newId,
-      vendorName: metadata?.vendor || 'BufferOn Pvt. Ltd.',
-      invoiceDate: metadata?.invoiceDate || '2025-05-18',
-      totalAmount: 145000.00,
-      currency: 'INR',
-      status: 'In Progress',
-      receivedOn: new Date().toISOString(),
-      extractionConfidence: 94,
-      lineItems: [] as any[],
-      subtotal: 122881.36,
-      cgst: 11059.32,
-      sgst: 11059.32,
-      anomalies: [],
-      createdAt: new Date().toISOString(),
-      invoiceNumber: metadata?.invoiceNumber || `INV-${newId}`,
-    };
-    mockInvoicesRaw.unshift(newInvoice);
-
-    // Transition from In Progress to Processed after 8 seconds
-    setTimeout(() => {
-      const found = mockInvoicesRaw.find((inv) => inv.invoiceId === newId);
-      if (found) {
-        found.status = 'Processed';
-      }
-    }, 8000);
-
-    return { invoiceId: newId, status: 'In Progress' };
+    throw new Error('API Base URL is missing. Cannot upload invoice.');
   }
 
   // Upload to API Gateway /upload endpoint directly as binary bytes
@@ -331,15 +188,7 @@ export async function uploadInvoice(
 
 export async function getDashboardStats(): Promise<DashboardStats> {
   if (!import.meta.env.VITE_API_BASE_URL) {
-    return {
-      totalInvoices: 1246,
-      processed: 1078,
-      inProgress: 98,
-      exceptions: 70,
-      inReview: 24,
-      processedPercentage: '86.5',
-      exceptionPercentage: '5.6',
-    };
+    throw new Error('API Base URL is missing. Cannot fetch dashboard stats.');
   }
 
   return apiClient.get<DashboardStats>('/dashboard');

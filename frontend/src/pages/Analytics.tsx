@@ -16,51 +16,7 @@ import {
 import { getInvoices } from '@/services/invoiceService';
 import { Button } from '@/components/ui/button';
 
-// ─── Mock Fallbacks ──────────────────────────────────────────────
-
-const MOCK_TRENDS = [
-  { date: 'May 1', processed: 42, inProgress: 8, exceptions: 3 },
-  { date: 'May 5', processed: 58, inProgress: 12, exceptions: 5 },
-  { date: 'May 8', processed: 74, inProgress: 10, exceptions: 4 },
-  { date: 'May 10', processed: 95, inProgress: 14, exceptions: 7 },
-  { date: 'May 12', processed: 110, inProgress: 11, exceptions: 6 },
-  { date: 'May 14', processed: 128, inProgress: 15, exceptions: 8 },
-  { date: 'May 16', processed: 142, inProgress: 9, exceptions: 5 },
-  { date: 'May 18', processed: 155, inProgress: 13, exceptions: 4 },
-];
-
-const MOCK_EXCEPTIONS = [
-  { type: 'Vendor Not Found', count: 28, percentage: 40, color: 'bg-purple-500' },
-  { type: 'Missing GSTIN', count: 16, percentage: 22.9, color: 'bg-red-500' },
-  { type: 'Amount Mismatch', count: 12, percentage: 17.1, color: 'bg-amber-500' },
-  { type: 'Low Confidence Score', count: 9, percentage: 12.9, color: 'bg-orange-500' },
-  { type: 'Duplicate Invoice', count: 5, percentage: 7.1, color: 'bg-blue-500' },
-];
-
-const MOCK_VENDORS = [
-  { vendor: 'ABC Solutions Ltd.', invoices: 145, value: 4850000, confidence: 96.2, successRate: 94.5 },
-  { vendor: 'TechCorp India', invoices: 128, value: 3920000, confidence: 93.8, successRate: 91.4 },
-  { vendor: 'Global Supplies', invoices: 112, value: 5120000, confidence: 94.5, successRate: 89.3 },
-  { vendor: 'Office Needs Co.', invoices: 98, value: 1560000, confidence: 88.7, successRate: 85.7 },
-  { vendor: 'Digital Services', invoices: 87, value: 2340000, confidence: 95.1, successRate: 93.1 },
-  { vendor: 'BufferOn Pvt. Ltd.', invoices: 76, value: 1890000, confidence: 91.4, successRate: 90.8 },
-];
-
-const MOCK_STAGES = [
-  { stage: 'Upload (S3)', avgMs: 1200, p95Ms: 2800, icon: '📤', barColor: 'bg-indigo-500' },
-  { stage: 'Textract', avgMs: 3400, p95Ms: 8200, icon: '📄', barColor: 'bg-emerald-500' },
-  { stage: 'Bedrock Validation', avgMs: 4800, p95Ms: 12000, icon: '🧠', barColor: 'bg-amber-500' },
-  { stage: 'Approval Workflow', avgMs: 28800000, p95Ms: 86400000, icon: '✅', barColor: 'bg-blue-500' },
-  { stage: 'Store & Notify', avgMs: 800, p95Ms: 1500, icon: '💾', barColor: 'bg-teal-500' },
-];
-
-const MOCK_MONTHS = [
-  { month: 'Jan', count: 156, value: 2.1 },
-  { month: 'Feb', count: 142, value: 1.9 },
-  { month: 'Mar', count: 189, value: 2.5 },
-  { month: 'Apr', count: 205, value: 2.8 },
-  { month: 'May', count: 248, value: 3.2 },
-];
+// Removed mock data per user request
 
 // ─── Helpers ──────────────────────────────────────────────────────
 
@@ -85,11 +41,11 @@ export default function Analytics() {
     totalValueProcessed: '₹ 12.5 Cr',
   });
 
-  const [trends, setTrends] = useState<typeof MOCK_TRENDS>(MOCK_TRENDS);
-  const [exceptions, setExceptions] = useState<typeof MOCK_EXCEPTIONS>(MOCK_EXCEPTIONS);
-  const [vendors, setVendors] = useState<typeof MOCK_VENDORS>(MOCK_VENDORS);
-  const [stages, setStages] = useState<typeof MOCK_STAGES>(MOCK_STAGES);
-  const [months, setMonths] = useState<typeof MOCK_MONTHS>(MOCK_MONTHS);
+  const [trends, setTrends] = useState<any[]>([]);
+  const [exceptions, setExceptions] = useState<any[]>([]);
+  const [vendors, setVendors] = useState<any[]>([]);
+  const [stages, setStages] = useState<any[]>([]);
+  const [months, setMonths] = useState<any[]>([]);
 
   const fetchAnalyticsData = useCallback(async () => {
     setLoading(true);
@@ -100,12 +56,6 @@ export default function Analytics() {
 
       const hasRealData = invoices.length > 0;
       if (!hasRealData && !import.meta.env.VITE_API_BASE_URL) {
-        // Fallback to mocks
-        setTrends(MOCK_TRENDS);
-        setExceptions(MOCK_EXCEPTIONS);
-        setVendors(MOCK_VENDORS);
-        setStages(MOCK_STAGES);
-        setMonths(MOCK_MONTHS);
         setLoading(false);
         return;
       }
@@ -229,13 +179,7 @@ export default function Analytics() {
       });
 
       if (computedExceptions.length === 0) {
-        computedExceptions = [
-          { type: 'Vendor Not Found', count: 0, percentage: 0, color: 'bg-purple-500' },
-          { type: 'Missing GSTIN', count: 0, percentage: 0, color: 'bg-red-500' },
-          { type: 'Amount Mismatch', count: 0, percentage: 0, color: 'bg-amber-500' },
-          { type: 'Low Confidence Score', count: 0, percentage: 0, color: 'bg-orange-500' },
-          { type: 'Duplicate Invoice', count: 0, percentage: 0, color: 'bg-blue-500' },
-        ];
+        computedExceptions = [];
       } else {
         computedExceptions.sort((a, b) => b.count - a.count);
       }
@@ -268,7 +212,7 @@ export default function Analytics() {
       });
 
       if (computedVendors.length === 0) {
-        computedVendors = MOCK_VENDORS;
+        computedVendors = [];
       } else {
         computedVendors.sort((a, b) => b.invoices - a.invoices);
         computedVendors = computedVendors.slice(0, 6);
@@ -309,7 +253,7 @@ export default function Analytics() {
       });
 
       if (computedMonths.length === 0) {
-        computedMonths = MOCK_MONTHS;
+        computedMonths = [];
       } else {
         computedMonths = computedMonths.slice(-5);
       }

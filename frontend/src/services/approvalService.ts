@@ -27,47 +27,7 @@ export interface ExceptionItem {
 
 // ─── Mock Data (Fallback) ─────────────────────────────────────────
 
-const mockExceptions: ExceptionItem[] = [
-  {
-    id: 'INV-2025-1243', vendor: 'Office Needs Co.', issueType: 'Missing GSTIN',
-    confidence: 65, assignedTo: 'Ananya Sharma', status: 'Pending Review',
-    date: 'May 17, 2025', amount: 15680.00, extractedGstin: 'Not Found',
-    description: 'GSTIN is missing or not detected in the invoice.',
-    extractedFields: [
-      { field: 'Vendor Name', extractedValue: 'Office Needs Co.', suggestedValue: 'Office Needs Co.' },
-      { field: 'GSTIN', extractedValue: 'Not Found', suggestedValue: '29ABCDE1234F1Z5', isEditable: true },
-      { field: 'Invoice Number', extractedValue: 'INV-2025-1243', suggestedValue: 'INV-2025-1243' },
-      { field: 'Invoice Date', extractedValue: 'May 17, 2025', suggestedValue: 'May 17, 2025' },
-      { field: 'Total Amount', extractedValue: '₹ 15,680.00', suggestedValue: '₹ 15,680.00' },
-    ],
-  },
-  {
-    id: 'INV-2025-1239', vendor: 'Data Experts', issueType: 'Amount Mismatch',
-    confidence: 72, assignedTo: 'Rohit Mehta', status: 'Pending Review',
-    date: 'May 16, 2025', amount: 45900.00, extractedGstin: '29DTEXP1234A1Z0',
-    description: 'Line items sum (₹ 45,000.00) does not match stated total (₹ 45,900.00).',
-    extractedFields: [
-      { field: 'Vendor Name', extractedValue: 'Data Experts', suggestedValue: 'Data Experts' },
-      { field: 'GSTIN', extractedValue: '29DTEXP1234A1Z0', suggestedValue: '29DTEXP1234A1Z0' },
-      { field: 'Invoice Number', extractedValue: 'INV-2025-1239', suggestedValue: 'INV-2025-1239' },
-      { field: 'Invoice Date', extractedValue: 'May 16, 2025', suggestedValue: 'May 16, 2025' },
-      { field: 'Total Amount', extractedValue: '₹ 45,900.00', suggestedValue: '₹ 45,000.00', isEditable: true },
-    ],
-  },
-  {
-    id: 'INV-2025-1228', vendor: 'Global Supplies', issueType: 'Vendor Not Found',
-    confidence: 60, assignedTo: 'Priya Nair', status: 'Pending Review',
-    date: 'May 15, 2025', amount: 89000.00, extractedGstin: '29GLSUP9876D1Z1',
-    description: 'Vendor name extracted does not match any registered vendor in the vendor database.',
-    extractedFields: [
-      { field: 'Vendor Name', extractedValue: 'Global Supplies', suggestedValue: 'Global Supplies LLC', isEditable: true },
-      { field: 'GSTIN', extractedValue: '29GLSUP9876D1Z1', suggestedValue: '29GLSUP9876D1Z1' },
-      { field: 'Invoice Number', extractedValue: 'INV-2025-1228', suggestedValue: 'INV-2025-1228' },
-      { field: 'Invoice Date', extractedValue: 'May 15, 2025', suggestedValue: 'May 15, 2025' },
-      { field: 'Total Amount', extractedValue: '₹ 89,000.00', suggestedValue: '₹ 89,000.00' },
-    ],
-  },
-];
+// Removed mock exceptions per user request
 
 // Helper to map backend anomalies to frontend ExceptionItem
 export function mapBackendInvoiceToExceptionItem(invoice: any): ExceptionItem {
@@ -145,16 +105,7 @@ export async function getExceptions(
   filters: ExceptionFilters = {}
 ): Promise<ExceptionItem[]> {
   if (!import.meta.env.VITE_API_BASE_URL) {
-    return mockExceptions.filter((item) => {
-      const matchesSearch = !filters.search ||
-        item.id.toLowerCase().includes(filters.search.toLowerCase()) ||
-        item.vendor.toLowerCase().includes(filters.search.toLowerCase()) ||
-        item.issueType.toLowerCase().includes(filters.search.toLowerCase());
-      const matchesIssue = !filters.issueType || filters.issueType === 'All' || item.issueType === filters.issueType;
-      const matchesStatus = !filters.status || filters.status === 'All' || item.status === filters.status;
-      const matchesAssignee = !filters.assignedTo || filters.assignedTo === 'All' || item.assignedTo === filters.assignedTo;
-      return matchesSearch && matchesIssue && matchesStatus && matchesAssignee;
-    });
+    throw new Error('API Base URL is missing. Cannot fetch exceptions.');
   }
 
   // Real backend call: GET /exceptions
@@ -182,8 +133,7 @@ export async function approveException(
   comment?: string
 ): Promise<void> {
   if (!import.meta.env.VITE_API_BASE_URL) {
-    await new Promise((res) => setTimeout(res, 500));
-    return;
+    throw new Error('API Base URL is missing. Cannot approve exception.');
   }
 
   // POST /approvals
@@ -202,8 +152,7 @@ export async function rejectException(
   reason?: string
 ): Promise<void> {
   if (!import.meta.env.VITE_API_BASE_URL) {
-    await new Promise((res) => setTimeout(res, 500));
-    return;
+    throw new Error('API Base URL is missing. Cannot reject exception.');
   }
 
   // POST /approvals
@@ -219,8 +168,7 @@ export async function reprocessException(
   id: string
 ): Promise<void> {
   if (!import.meta.env.VITE_API_BASE_URL) {
-    await new Promise((res) => setTimeout(res, 800));
-    return;
+    throw new Error('API Base URL is missing. Cannot reprocess exception.');
   }
 
   // POST /approvals

@@ -471,7 +471,7 @@ IMPORTANT RULES:
 Return ONLY a valid JSON object with this exact structure (no markdown, no explanation, no extra text):
 
 {
-  "vendorName": "<exact vendor/company name from invoice>",
+  "vendorName": "<exact name of the vendor/company who issued this invoice (look at the header/logo area)>",
   "vendorAddress": "<full vendor address if present>",
   "gstin": "<15-char GSTIN if present, otherwise empty string>",
   "invoiceNumber": "<invoice number/ID>",

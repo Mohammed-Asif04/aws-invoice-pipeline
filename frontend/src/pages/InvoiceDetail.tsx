@@ -23,61 +23,7 @@ import { apiClient } from '@/services/api';
 
 type TabType = 'summary' | 'extraction' | 'approval' | 'audit';
 
-// Full mockup data for the details view
-const invoiceDetailsMock = {
-  invoiceId: 'INV-2025-1246',
-  vendorName: 'ABC Solutions Ltd.',
-  vendorAddress: '123 Business Park, Bengaluru, Karnataka - 560078 India',
-  contactPerson: 'Rahul Mehta',
-  email: 'info@abcsolutions.com',
-  phone: '+91 80 1234 5678',
-  gstin: '29ABCDE1234F1Z5',
-  invoiceDate: 'May 18, 2025',
-  dueDate: 'June 17, 2025',
-  invoiceNumber: 'INV-2025-1246',
-  poNumber: 'PO-2025-089',
-  invoiceType: 'Purchase',
-  createdBy: 'Ananya Sharma',
-  createdAt: 'May 18, 2025 10:23 AM',
-  status: 'Processed' as const,
-  receivedOn: 'May 18, 2025 10:23 AM',
-  
-  // Payment totals
-  subtotal: 120500.00,
-  cgst: 10845.00,
-  sgst: 10845.00,
-  totalAmount: 142190.00,
-  currency: 'INR',
-
-  // Confidence & Extraction Key Fields
-  confidenceScore: 92,
-  confidenceLabel: 'High Confidence',
-
-  extractedFields: [
-    { fieldName: 'Vendor Name', extractedValue: 'ABC Solutions Ltd.', confidence: 98, validationStatus: 'Matched' as const },
-    { fieldName: 'Invoice Number', extractedValue: 'INV-2025-1246', confidence: 99, validationStatus: 'Matched' as const },
-    { fieldName: 'Invoice Date', extractedValue: 'May 18, 2025', confidence: 98, validationStatus: 'Matched' as const },
-    { fieldName: 'Total Amount', extractedValue: '₹ 1,42,190.00', confidence: 96, validationStatus: 'Matched' as const },
-    { fieldName: 'GSTIN', extractedValue: '29ABCDE1234F1Z5', confidence: 95, validationStatus: 'Matched' as const },
-    { fieldName: 'PO Number', extractedValue: 'PO-2025-089', confidence: 90, validationStatus: 'Matched' as const },
-  ],
-
-  // Step function history
-  approvalHistory: [
-    { step: 'Ingestion Trigger', timestamp: 'May 18, 2025 10:23 AM', status: 'Success', details: 'SES Email attachment parsed and stored in S3.' },
-    { step: 'Document Extraction', timestamp: 'May 18, 2025 10:23 AM', status: 'Success', details: 'Amazon Textract processed document successfully.' },
-    { step: 'Intelligent Bedrock Validation', timestamp: 'May 18, 2025 10:23 AM', status: 'Success', details: 'Claude 3 model validated fields. Confidence score: 92%.' },
-    { step: 'Human approval', timestamp: 'May 18, 2025 11:20 AM', status: 'Approved', details: 'Invoice approved by Ananya Sharma (Finance Team).' },
-  ],
-
-  // Storage / Audit details
-  auditLogs: [
-    { event: 'S3 Ingestion Attachment', path: 's3://invoices-raw-bucket-prod/2025/05/18/abc-inv.pdf', hash: 'e20a4570db2b271d5334812a1df67104' },
-    { event: 'Amazon Textract Response Metadata', path: 's3://invoices-audit-bucket-prod/2025/05/18/abc-inv_textract.json', hash: '3a492025d57bf7411648a1d2e1d2e5a4' },
-    { event: 'Claude 3 Bedrock Analysis JSON', path: 's3://invoices-audit-bucket-prod/2025/05/18/abc-inv_bedrock.json', hash: '7c89fde57f12e1281df6714a1f6a4b12' },
-    { event: 'DynamoDB Ledger Persistence', key: 'INV-2025-1246', timestamp: 'May 18, 2025 10:23 AM' },
-  ],
-};
+// Removed mock data per user request
 
 export default function InvoiceDetail() {
   const { invoiceId } = useParams();
@@ -130,20 +76,11 @@ export default function InvoiceDetail() {
             auditLogs,
           });
         } else {
-          // Check if fallback mock exists
-          if (invoiceId === 'INV-2025-1246') {
-            setInvoiceData(invoiceDetailsMock);
-          } else {
-            setError('Invoice not found');
-          }
+          setError('Invoice not found');
         }
       } catch (err) {
         if (!isMounted) return;
-        if (invoiceId === 'INV-2025-1246') {
-          setInvoiceData(invoiceDetailsMock);
-        } else {
-          setError(err instanceof Error ? err.message : 'Failed to fetch invoice details');
-        }
+        setError(err instanceof Error ? err.message : 'Failed to fetch invoice details');
       } finally {
         if (isMounted) setLoading(false);
       }

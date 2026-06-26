@@ -185,26 +185,35 @@ export async function findDuplicateInvoice(
       TableName: INVOICE_TABLE(),
       IndexName: 'invoiceNumber-index',
       KeyConditionExpression: '#invoiceNumber = :invoiceNumber',
-      FilterExpression: '#vendorName = :vendorName',
       ExpressionAttributeNames: {
         '#invoiceNumber': 'invoiceNumber',
-        '#vendorName': 'vendorName',
       },
       ExpressionAttributeValues: {
         ':invoiceNumber': invoiceNumber,
-        ':vendorName': vendorName,
       }
     })
   );
 
   if (!result.Items || result.Items.length === 0) return null;
   
+  let items = result.Items as InvoiceRecord[];
+  
+  // Filter out the current invoice if updating
   if (currentInvoiceId) {
-    const duplicate = result.Items.find(item => item.invoiceId !== currentInvoiceId);
-    return duplicate ? (duplicate as InvoiceRecord) : null;
+    items = items.filter(item => item.invoiceId !== currentInvoiceId);
   }
   
-  return result.Items[0] as InvoiceRecord;
+  // Case-insensitive check for vendorName (if provided)
+  if (items.length > 0 && vendorName && vendorName !== 'Unknown') {
+    const normalizedVendor = vendorName.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const duplicate = items.find(item => {
+      const dbVendor = (item.vendorName || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      return dbVendor.includes(normalizedVendor) || normalizedVendor.includes(dbVendor);
+    });
+    return duplicate || items[0]; // If invoice numbers match, it's highly likely a duplicate anyway
+  }
+  
+  return items.length > 0 ? items[0] : null;
 }
 
 /**

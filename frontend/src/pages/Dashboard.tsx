@@ -80,14 +80,7 @@ export default function Dashboard() {
         .slice(0, 5);
 
       if (topList.length === 0) {
-        // Safe placeholder fallback if there are no exceptions active
-        setTopExceptions([
-          { reason: 'Vendor not found', count: 0 },
-          { reason: 'Missing GSTIN', count: 0 },
-          { reason: 'Amount mismatch', count: 0 },
-          { reason: 'Low confidence score', count: 0 },
-          { reason: 'Duplicate invoice', count: 0 },
-        ]);
+        setTopExceptions([]);
       } else {
         setTopExceptions(topList);
       }
@@ -125,16 +118,8 @@ export default function Dashboard() {
         }
       });
 
-      const isAllZero = processedCounts.reduce((a, b) => a + b, 0) === 0;
-      if (isAllZero && !import.meta.env.VITE_API_BASE_URL) {
-        // Safe mock fallback curve for rich styling when offline
-        setChartData({
-          labels,
-          processed: [5, 12, 18, 25, 32, 45],
-          inProgress: [2, 4, 3, 5, 2, 4],
-          exceptions: [1, 2, 1, 3, 1, 2],
-          maxVal: 50,
-        });
+      if (false) {
+        // Removed mock fallback curve
       } else {
         const maxVal = Math.max(
           10,
@@ -487,7 +472,7 @@ export default function Dashboard() {
                         </td>
                         <td className="py-3 px-4 font-medium text-foreground">{inv.vendorName}</td>
                         <td className="py-3 px-4 font-medium">
-                          ₹ {inv.totalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                          ₹ {(inv.totalAmount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                         </td>
                         <td className="py-3 px-4" onClick={(e) => e.stopPropagation()}>
                           <StatusBadge status={inv.status} />
