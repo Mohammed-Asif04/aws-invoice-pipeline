@@ -57,7 +57,16 @@ export async function handler(event: PipelineState): Promise<PipelineState> {
   try {
     const anomalies: Anomaly[] = [];
 
-    // --- Rule 1: Check for duplicate invoices ---
+    // --- Rule 1: Check for missing Vendor Name ---
+    if (!extraction.vendorName || extraction.vendorName.trim() === '' || extraction.vendorName.toLowerCase().includes('unknown')) {
+      anomalies.push({
+        type: 'VENDOR_NOT_FOUND',
+        description: 'Vendor name is missing or could not be extracted from the invoice.',
+        severity: 'HIGH',
+      });
+    }
+
+    // --- Rule 2: Check for duplicate invoices ---
     const duplicateCheck = await checkDuplicateInvoice(
       extraction.invoiceNumber,
       extraction.vendorName,
@@ -67,7 +76,7 @@ export async function handler(event: PipelineState): Promise<PipelineState> {
       anomalies.push(duplicateCheck);
     }
 
-    // --- Rule 2: Check for missing GSTIN ---
+    // --- Rule 3: Check for missing GSTIN ---
     if (!extraction.gstin || extraction.gstin.trim() === '') {
       anomalies.push({
         type: 'MISSING_GSTIN',
@@ -88,13 +97,13 @@ export async function handler(event: PipelineState): Promise<PipelineState> {
       });
     }
 
-    // --- Rule 3: Amount mismatch (line items vs total) ---
+    // --- Rule 4: Amount mismatch (line items vs total) ---
     const amountMismatch = checkAmountMismatch(extraction);
     if (amountMismatch) {
       anomalies.push(amountMismatch);
     }
 
-    // --- Rule 4: Low confidence score ---
+    // --- Rule 5: Low confidence score ---
     if (extraction.overallConfidence < CONFIDENCE_THRESHOLD) {
       anomalies.push({
         type: 'LOW_CONFIDENCE_SCORE',
@@ -103,7 +112,7 @@ export async function handler(event: PipelineState): Promise<PipelineState> {
       });
     }
 
-    // --- Rule 5: Call Bedrock Claude for deeper validation ---
+    // --- Rule 6: Call Bedrock Claude for deeper validation ---
     const bedrockValidation = await invokeBedrockValidation(
       extraction,
       anomalies

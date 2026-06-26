@@ -232,7 +232,14 @@ function parseTextractResponse(
 
         // Map Textract field names to our schema
         const mappedName = FIELD_MAPPINGS[fieldType] || fieldType;
-        extracted[mappedName] = fieldValue;
+        
+        if (mappedName === 'tax') {
+          const currentTax = parseFloat(extracted.tax?.replace(/,/g, '') || '0');
+          const newTax = parseFloat(fieldValue.replace(/,/g, '') || '0');
+          extracted.tax = (currentTax + newTax).toString();
+        } else if (!extracted[mappedName]) {
+          extracted[mappedName] = fieldValue;
+        }
 
         extractedFields.push({
           fieldName: mappedName,
