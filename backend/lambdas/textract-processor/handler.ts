@@ -59,6 +59,7 @@ const FIELD_MAPPINGS: Record<string, string> = {
   PAYMENT_TERMS: 'paymentTerms',
   TAX_PAYER_ID: 'gstin',
   ACCOUNT_NUMBER: 'accountNumber',
+  NAME: 'name',
 };
 
 // ---------------------------------------------------------------------------
@@ -295,7 +296,7 @@ function parseTextractResponse(
     s3RawKey,
     extractedFields,
     lineItems,
-    vendorName: extracted.vendorName || '',
+    vendorName: extracted.vendorName || extracted.name || extracted.receiverName || '',
     vendorAddress: extracted.vendorAddress,
     gstin,
     invoiceDate: extracted.invoiceDate || '',

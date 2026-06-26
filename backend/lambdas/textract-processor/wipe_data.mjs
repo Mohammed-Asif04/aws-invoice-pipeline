@@ -75,6 +75,8 @@ async function main() {
     try {
         console.log('Starting data wipe...');
         await Promise.all([
+            emptyBucket(RAW_BUCKET),
+            emptyBucket(AUDIT_BUCKET),
             emptyTable(INVOICE_TABLE, ['invoiceId', 'vendorId']),
             emptyTable(AUDIT_TABLE, ['auditId', 'timestamp'])
         ]);
