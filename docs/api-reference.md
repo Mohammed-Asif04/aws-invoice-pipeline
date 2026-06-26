@@ -1,189 +1,216 @@
-# 📖 API Reference — AWS Invoice Pipeline
+# AWS Invoice Pipeline — API Reference
 
-This document details the REST API endpoints provided by the **API Gateway** layer of the AWS Invoice Processing Pipeline. The endpoints route requests to the `approval-handler` Lambda.
+This document provides a comprehensive, code-driven reference of all API Gateway endpoints deployed for the AWS Invoice Processing Pipeline. All REST API endpoints are secured via AWS API Gateway and route to either the `invoice-ingestion` Lambda (for uploads) or the `approval-handler` Lambda (for approvals and data retrieval).
 
-## 🔗 Base URL
-* **Deployed API Gateway URL**: `https://<api-id>.execute-api.<region>.amazonaws.com/prod`
-* **Local Development (SAM local)**: `http://localhost:3000`
+## 🚀 Base Architecture
 
----
-
-## 🚦 Endpoints Summary
-
-| Method | Path | Description | Access |
-|:---|:---|:---|:---|
-| **GET** | `/approve` | Callback link from email to approve invoice | Public (signed links) |
-| **GET** | `/reject` | Callback link from email to reject invoice | Public (signed links) |
-| **POST** | `/approvals` | Perform approval, rejection, or reprocessing | Authenticated |
-| **GET** | `/invoices` | List, search, and paginate processed invoices | Authenticated |
-| **GET** | `/invoices/{invoiceId}` | Fetch details & audit logs for a single invoice | Authenticated |
-| **GET** | `/exceptions` | List invoices requiring manual review / flags | Authenticated |
-| **GET** | `/audit` | Query audit log history for a specific invoice | Authenticated |
-| **GET** | `/dashboard` | Retrieve high-level operational metrics | Authenticated |
+- **Protocol**: HTTPS / REST
+- **CORS**: Enabled for all origins (`*`), supporting `GET`, `POST`, `OPTIONS`.
+- **Base URL (Example)**: `https://<api-id>.execute-api.<region>.amazonaws.com/<env>`
+- **Content-Type**: `application/json` (except for email callback endpoints which return `text/html`).
 
 ---
 
-## 📝 Detailed Endpoints
+## 📂 1. Ingestion Endpoints
 
-### 1. Email Approval Callback (`GET /approve`)
-Invoked when a reviewer clicks the **Approve** button in their review request email. Resumes the Step Functions workflow and redirects the user to an HTML success page.
+Handled by the **`invoice-ingestion`** Lambda function.
 
-* **Query Parameters**:
-  * `token` (String, Required): Step Functions execution task token.
-  * `invoiceId` (String, Required): The target invoice ID.
+### `POST /upload`
+Directly uploads an invoice document (PDF) into the pipeline.
 
-* **Response (200 OK)**:
-  * **Content-Type**: `text/html`
-  * **Body**: Responsive HTML confirmation page.
+- **Headers**:
+  - `Content-Type`: `multipart/form-data` OR `application/pdf` (base64 encoded via API Gateway)
+  - `X-Filename`: (Optional) Original filename of the upload
+  - `X-Invoice-Metadata`: (Optional) JSON string containing manual form fields from the UI (Vendor, PO Number, etc.)
 
-* **Error Response (400 Bad Request)**:
-  * **Content-Type**: `application/json`
-  * `{ "error": "Missing token or invoiceId" }`
+- **Request Body**:
+  The raw binary PDF file or a base64 encoded string if sent directly via API Gateway proxy.
 
----
-
-### 2. Email Rejection Callback (`GET /reject`)
-Invoked when a reviewer clicks the **Reject** button in their review request email. Resumes the Step Functions workflow with a failure code and redirects the user to an HTML success page.
-
-* **Query Parameters**:
-  * `token` (String, Required): Step Functions execution task token.
-  * `invoiceId` (String, Required): The target invoice ID.
-
-* **Response (200 OK)**:
-  * **Content-Type**: `text/html`
-  * **Body**: Responsive HTML confirmation page.
-
----
-
-### 3. Handle Invoice Action (`POST /approvals`)
-Submits review decisions (Approve, Reject, Reprocess) from the React UI dashboard.
-
-* **Request Headers**:
-  * `Content-Type: application/json`
-
-* **Request Body**:
-```json
-{
-  "invoiceId": "inv-10023-xyz",
-  "action": "APPROVE", 
-  "taskToken": "AAAAKgAAAAIAAAAAAAAAAY...", // Optional: required only if resuming Step Functions
-  "reviewer": "Reviewer Team A",
-  "comments": "Totals matched. Standard approval given.",
-  "correctedFields": {
-    "gstin": "27AAAAA1111A1Z1"
+- **Success Response (200 OK)**:
+  ```json
+  {
+    "success": true,
+    "invoiceId": "INV-2026-A1B2C3D4",
+    "message": "Invoice uploaded and pipeline started"
   }
-}
-```
-* **Actions Supported**:
-  * `APPROVE`: Marks status as `PROCESSED` and resumes workflow.
-  * `REJECT`: Marks status as `RESOLVED` and halts workflow with rejection audit.
-  * `REPROCESS`: Re-routes the invoice back into the Textract extraction pipeline.
+  ```
 
-* **Response (200 OK)**:
-```json
-{
-  "success": true,
-  "invoiceId": "inv-10023-xyz",
-  "action": "APPROVE",
-  "message": "Invoice approved successfully"
-}
-```
+- **Error Responses**:
+  - `400 Bad Request`: "No file data provided"
+  - `405 Method Not Allowed`: "Method not allowed"
 
 ---
 
-### 4. Fetch Invoices (`GET /invoices`)
-Lists all processed or in-progress invoices.
+## 📝 2. Email Callback Endpoints
 
-* **Query Parameters**:
-  * `status` (String, Optional): Filter by status (`PROCESSED`, `IN_REVIEW`, `EXCEPTION`, `IN_PROGRESS`, `RESOLVED`).
-  * `pageSize` (Number, Optional): Number of records to return (default: `25`).
-  * `lastKey` (JSON String, Optional): Pagination token returned from the previous page's `lastKey`.
+Handled by the **`approval-handler`** Lambda function. These endpoints are triggered via hyperlinks injected into SES emails.
 
-* **Response (200 OK)**:
-```json
-{
-  "items": [
-    {
-      "invoiceId": "inv_101",
-      "vendorName": "ACME Corp",
-      "invoiceNumber": "INV-12345",
-      "totalAmount": 1180.00,
-      "status": "PROCESSED",
-      "createdAt": "2026-06-24T12:00:00.000Z",
-      "updatedAt": "2026-06-24T12:05:00.000Z"
-    }
-  ],
-  "lastKey": "{\"invoiceId\":\"inv_101\",\"vendorId\":\"ACME Corp\"}"
-}
-```
+### `GET /approve`
+Approves an invoice directly from an email notification.
+
+- **Query Parameters**:
+  - `token` (Required): Step Functions task token.
+  - `invoiceId` (Required): ID of the invoice.
+
+- **Success Response (200 OK)**:
+  Returns a rendered HTML page confirming the invoice was approved. The Step Functions workflow resumes with a `SendTaskSuccess` command.
+
+### `GET /reject`
+Rejects an invoice directly from an email notification.
+
+- **Query Parameters**:
+  - `token` (Required): Step Functions task token.
+  - `invoiceId` (Required): ID of the invoice.
+
+- **Success Response (200 OK)**:
+  Returns a rendered HTML page confirming the invoice was rejected. The Step Functions workflow resumes with a `SendTaskFailure` command.
 
 ---
 
-### 5. Fetch Invoice Details (`GET /invoices/{invoiceId}`)
-Gets detailed metadata, extracted line items, anomalies, and audit log history for a single invoice.
+## 🛠️ 3. Dashboard & Operations Endpoints
 
-* **Path Parameters**:
-  * `invoiceId` (String, Required): Unique ID of the invoice.
+Handled by the **`approval-handler`** Lambda function. These are consumed by the React (Vite) frontend.
 
-* **Response (200 OK)**:
-```json
-{
-  "invoice": {
-    "invoiceId": "inv-10023",
-    "vendorId": "PENDING",
-    "vendorName": "Acme Software Solutions Ltd",
-    "invoiceNumber": "INV-2026-001",
-    "invoiceDate": "2026-06-20",
-    "lineItems": [
+### `GET /dashboard`
+Retrieves aggregated statistics across the entire database to power dashboard KPIs.
+
+- **Query Parameters**: None.
+- **Success Response (200 OK)**:
+  ```json
+  {
+    "totalInvoices": 150,
+    "processed": 120,
+    "inProgress": 10,
+    "exceptions": 15,
+    "inReview": 3,
+    "pendingReview": 2,
+    "resolved": 0,
+    "processedPercentage": "80.0",
+    "exceptionPercentage": "10.0"
+  }
+  ```
+
+### `GET /invoices`
+Retrieves a paginated list of all invoices.
+
+- **Query Parameters**:
+  - `status` (Optional): Filter by `InvoiceStatus` (e.g., `PROCESSED`, `IN_REVIEW`).
+  - `pageSize` (Optional, Default `25`): Limit results per page.
+  - `lastKey` (Optional): JSON string representation of DynamoDB LastEvaluatedKey for pagination.
+
+- **Success Response (200 OK)**:
+  ```json
+  {
+    "items": [
       {
-        "description": "Cloud Consulting Services",
-        "quantity": 10,
-        "unitPrice": 100.00,
-        "amount": 1000.00,
-        "hsnSac": "998311"
+        "invoiceId": "INV-...",
+        "vendorName": "Acme Corp",
+        "totalAmount": 1000.00,
+        "status": "PROCESSED"
       }
     ],
-    "subtotal": 1000.00,
-    "cgst": 90.00,
-    "sgst": 90.00,
-    "totalAmount": 1180.00,
-    "status": "PROCESSED",
-    "extractionConfidence": 94,
-    "s3ExtractedJsonKey": "textract/inv-10023/raw-response.json"
-  },
-  "auditLogs": [
-    {
-      "auditId": "a811c-9923...",
-      "invoiceId": "inv-10023",
-      "event": "AI validation completed",
-      "eventType": "VALIDATION",
-      "timestamp": "2026-06-24T12:02:00.000Z",
-      "user": "system",
-      "details": "Bedrock validation completed successfully."
+    "total": 1,
+    "hasMore": false
+  }
+  ```
+
+### `GET /invoices/{invoiceId}`
+Retrieves complete details of a specific invoice along with its audit history.
+
+- **Path Parameters**:
+  - `invoiceId` (Required): The ID of the target invoice.
+
+- **Success Response (200 OK)**:
+  ```json
+  {
+    "invoice": {
+      "invoiceId": "INV-...",
+      "vendorName": "Acme Corp",
+      "lineItems": [],
+      "anomalies": []
+    },
+    "auditLogs": [
+      {
+        "eventType": "INGESTION",
+        "event": "Invoice received via email",
+        "timestamp": "2026-06-25T12:00:00Z"
+      }
+    ]
+  }
+  ```
+
+### `GET /exceptions`
+Retrieves all invoices that have encountered anomalies or require manual review.
+
+- **Query Parameters**:
+  - `pageSize` (Optional, Default `25`): Pagination limit.
+
+- **Success Response (200 OK)**:
+  Returns a combined list of invoices with statuses `EXCEPTION`, `IN_REVIEW`, `PENDING_REVIEW`, and `RESOLVED`.
+  ```json
+  {
+    "items": [],
+    "total": 0,
+    "stats": {
+      "totalExceptions": 0,
+      "pendingReview": 0,
+      "inProgress": 0,
+      "resolved": 0
     }
-  ]
-}
-```
+  }
+  ```
+
+### `GET /audit`
+Queries the audit log table directly for a specific invoice's history.
+
+- **Query Parameters**:
+  - `invoiceId` (Required): The target invoice ID.
+
+- **Success Response (200 OK)**:
+  ```json
+  {
+    "entries": [
+      {
+        "auditId": "...",
+        "eventType": "VALIDATION",
+        "details": "..."
+      }
+    ]
+  }
+  ```
 
 ---
 
-### 6. Get Dashboard Stats (`GET /dashboard`)
-Retrieves statistics to populate KPI cards and trend charts on the landing page of the React UI.
+## 🎯 4. Workflow Actions
 
-* **Response (200 OK)**:
-```json
-{
-  "total": 150,
-  "processed": 120,
-  "inProgress": 10,
-  "exceptions": 15,
-  "inReview": 5,
-  "exceptionPercentage": "10.0",
-  "monthlyTrend": [
-    { "month": "June", "processed": 45, "exceptions": 3 }
-  ],
-  "vendorMetrics": [
-    { "vendorName": "ACME Corp", "totalVolume": 15, "accuracyRate": "98.5" }
-  ]
-}
-```
+### `POST /approvals`
+Submits a review decision (Approve, Reject, or Reprocess) from the dashboard UI. Handles dynamic updates to extracted fields (like fixing an amount or GSTIN manually).
+
+- **Request Body**:
+  ```json
+  {
+    "invoiceId": "INV-2026-...",
+    "action": "APPROVE", 
+    "taskToken": "AAAAKgAAAAIA...", 
+    "reviewer": "Admin User",
+    "comments": "Fixed subtotal mismatch",
+    "correctedFields": {
+      "INV-2026-...-subtotal": 500.00
+    }
+  }
+  ```
+
+- **Behavior**:
+  - `APPROVE`: Updates DB fields using `correctedFields`. Sets status to `PROCESSED`. Resumes Step Functions workflow via `SendTaskSuccess`. Clears anomalies.
+  - `REJECT`: Sets status to `RESOLVED`. Logs rejection comments. Resumes workflow via `SendTaskFailure`.
+  - `REPROCESS`: Reverts status to `IN_PROGRESS`. (Allows manual trigger back to extraction).
+
+- **Success Response (200 OK)**:
+  ```json
+  {
+    "success": true,
+    "invoiceId": "INV-2026-...",
+    "action": "APPROVE",
+    "message": "Invoice approved successfully"
+  }
+  ```
