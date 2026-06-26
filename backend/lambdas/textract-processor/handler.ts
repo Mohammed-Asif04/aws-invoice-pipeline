@@ -76,7 +76,7 @@ export async function handler(event: PipelineState): Promise<PipelineState> {
   try {
     // Call Textract AnalyzeExpense passing S3 object directly
     let textractResponse;
-    let extraction: TextractExtractionResult;
+    let extraction: TextractExtractionResult = {} as any;
     let isBedrockFallback = false;
 
     try {
@@ -102,60 +102,12 @@ export async function handler(event: PipelineState): Promise<PipelineState> {
           errorMessage: textractError.message,
         });
         isBedrockFallback = true;
-        try {
-          const bedrockResult = await extractInvoiceWithBedrock(s3Bucket, s3Key, invoiceId);
-          extraction = buildExtractionResultFromBedrock(bedrockResult, invoiceId, s3Key);
-          textractResponse = {
-            source: 'bedrock-fallback',
-            bedrockResult,
-          };
-        } catch (bedrockError: any) {
-          if (bedrockError.name === 'AccessDeniedException' || bedrockError.name === 'ThrottlingException' || bedrockError.message?.includes('payment instrument')) {
-            log.warn('Bedrock extraction blocked by AWS Billing/Quota. Using mock data.', { error: bedrockError.message });
-            const isMissing = s3Key.includes('missing_gstin');
-            extraction = {
-              invoiceId: invoiceId,
-              vendorName: isMissing ? 'XYZ CORP LTD.' : 'ABC SOLUTIONS LTD.',
-              vendorAddress: isMissing ? '456 Cyber Hub, Gurugram, Haryana - 122002 India' : '123 Tech Park, Innovation Way\nMumbai, Maharashtra 400001',
-              gstin: isMissing ? '' : '27AABCB1234D1Z5',
-              invoiceNumber: isMissing ? 'INV-2026-XYZ-111' : 'INV-2026-ABC-900',
-              invoiceDate: '2026-06-26T00:00:00.000Z',
-              dueDate: '2026-07-10T00:00:00.000Z',
-              poNumber: isMissing ? 'PO-11223344' : 'PO-987654321',
-              subtotal: 170000.00,
-              cgst: 15300.00,
-              sgst: 15300.00,
-              totalAmount: 200600.00,
-              currency: 'INR',
-              overallConfidence: 95.5,
-              lineItems: [
-                {
-                  description: 'Software Development Services (June 2026)',
-                  quantity: 1,
-                  unitPrice: 150000,
-                  amount: 150000,
-                  confidence: 99.1
-                },
-                {
-                  description: 'Cloud Architecture Consulting',
-                  quantity: 40,
-                  unitPrice: 500,
-                  amount: 20000,
-                  confidence: 98.5
-                }
-              ],
-              extractedFields: [
-                { fieldName: 'Vendor Name', extractedValue: isMissing ? 'XYZ CORP LTD.' : 'ABC SOLUTIONS LTD.', confidence: 99.9, pageNumber: 1, geometry: {} },
-                { fieldName: 'Invoice Number', extractedValue: isMissing ? 'INV-2026-XYZ-111' : 'INV-2026-ABC-900', confidence: 99.8, pageNumber: 1, geometry: {} },
-                { fieldName: 'Total Amount', extractedValue: '200600.00', confidence: 99.5, pageNumber: 1, geometry: {} },
-                ...(isMissing ? [] : [{ fieldName: 'GSTIN', extractedValue: '27AABCB1234D1Z5', confidence: 99.5, pageNumber: 1, geometry: {} }])
-              ]
-            };
-            textractResponse = { source: 'mock-fallback', reason: 'aws-billing-blocked' };
-          } else {
-            throw bedrockError;
-          }
-        }
+        const bedrockResult = await extractInvoiceWithBedrock(s3Bucket, s3Key, invoiceId);
+        extraction = buildExtractionResultFromBedrock(bedrockResult, invoiceId, s3Key);
+        textractResponse = {
+          source: 'bedrock-fallback',
+          bedrockResult,
+        };
       } else {
         throw textractError;
       }
