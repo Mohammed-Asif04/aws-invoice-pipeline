@@ -9,44 +9,7 @@
 
 The following architecture diagram represents the 5-stage pipeline, from ingestion to human review.
 
-```mermaid
-graph TD
-    %% Styling
-    classDef aws fill:#FF9900,stroke:#232F3E,stroke-width:2px,color:#232F3E,font-weight:bold
-    classDef lambda fill:#FF9900,stroke:#232F3E,stroke-width:2px,color:#232F3E,font-weight:bold
-    classDef ai fill:#00A4A6,stroke:#232F3E,stroke-width:2px,color:#fff,font-weight:bold
-    classDef db fill:#3B48CC,stroke:#232F3E,stroke-width:2px,color:#fff,font-weight:bold
-    classDef ui fill:#6366f1,stroke:#232F3E,stroke-width:2px,color:#fff,font-weight:bold
-    classDef step fill:#E7157B,stroke:#232F3E,stroke-width:2px,color:#fff,font-weight:bold
-
-    %% Nodes
-    A1[fa:fa-envelope Email Attachment via SES]:::ui
-    A2[fa:fa-upload Drag & Drop Upload]:::ui
-    B[(fa:fa-database S3 Raw Bucket)]:::aws
-    C[fa:fa-bolt Lambda: Textract Processor]:::lambda
-    D[fa:fa-file-text Amazon Textract AnalyzeExpense]:::ai
-    E[fa:fa-bolt Lambda: Bedrock Validator]:::lambda
-    F[fa:fa-brain Amazon Bedrock Claude 3]:::ai
-    G{fa:fa-cogs Step Functions Orchestration}:::step
-    H[(fa:fa-table DynamoDB + S3 Audit)]:::db
-    I[fa:fa-exclamation-triangle Anomalies Detected]
-    J[fa:fa-envelope SES Reviewer Email]:::aws
-    K[fa:fa-user Human Review: Approve / Reject]:::ui
-
-    %% Edges
-    A1 --> B
-    A2 --> B
-    B -- S3 Event Trigger --> C
-    C <--> D
-    C -- Extracted JSON --> E
-    E <--> F
-    E -- Validation Result --> G
-    G -- Happy Path --> H
-    G -- Exception Path --> I
-    I --> J
-    J --> K
-    K -- Resume Workflow --> G
-```
+![Pipeline Architecture](./docs/aws_invoice_pipeline_diagram.svg)
 
 ---
 

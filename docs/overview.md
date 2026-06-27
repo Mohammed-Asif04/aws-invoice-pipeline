@@ -12,7 +12,6 @@ Small and medium-sized enterprises receive a high volume of invoices via email d
 ---
 
 ## Architecture — End-to-End Flow
-
 ```
 Email (SES) → S3 (raw PDFs)
                   ↓ S3 Event Notification
