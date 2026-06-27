@@ -6,7 +6,6 @@ import InvoiceList from '@/pages/InvoiceList';
 import InvoiceDetail from '@/pages/InvoiceDetail';
 import Approvals from '@/pages/Approvals';
 import Analytics from '@/pages/Analytics';
-import Settings from '@/pages/Settings';
 import AuditLogs from '@/pages/AuditLogs';
 import { TooltipProvider } from '@/components/ui/tooltip';
 
@@ -27,7 +26,6 @@ export default function App() {
               <Route path="/invoices/:invoiceId" element={<InvoiceDetail />} />
               <Route path="/approvals" element={<Approvals />} />
               <Route path="/analytics" element={<Analytics />} />
-              <Route path="/settings" element={<Settings />} />
               <Route path="/audit-logs" element={<AuditLogs />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>

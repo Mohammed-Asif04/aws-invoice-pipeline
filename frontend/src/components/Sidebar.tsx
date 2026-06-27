@@ -5,7 +5,6 @@ import {
   FileText,
   ShieldAlert,
   BarChart3,
-  Settings,
   ClipboardList,
   ChevronDown,
 } from 'lucide-react';
@@ -16,7 +15,6 @@ const navItems = [
   { label: 'Invoices', path: '/invoices', icon: FileText },
   { label: 'Approval / Exceptions', path: '/approvals', icon: ShieldAlert },
   { label: 'Analytics', path: '/analytics', icon: BarChart3 },
-  { label: 'Settings', path: '/settings', icon: Settings },
   { label: 'Audit Logs', path: '/audit-logs', icon: ClipboardList },
 ];
 
