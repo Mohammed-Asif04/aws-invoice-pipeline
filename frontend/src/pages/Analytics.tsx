@@ -196,7 +196,7 @@ export default function Analytics() {
         stat.count++;
         stat.totalVal += inv.totalAmount || 0;
         stat.confSum += inv.extractionConfidence || 0;
-        if (inv.status === 'Processed' || inv.status === 'Resolved') {
+        if (inv.status === 'Processed' || inv.status === 'Resolved' || (inv.extractionConfidence && inv.extractionConfidence >= 90)) {
           stat.successCount++;
         }
       });
