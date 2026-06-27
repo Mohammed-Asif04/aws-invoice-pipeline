@@ -24,9 +24,9 @@ export default function Header({ title, subtitle }: HeaderProps) {
         </button>
         <div className="flex items-center gap-2 pl-2 border-l border-border">
           <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-xs font-semibold text-primary">
-            AS
+            MA
           </div>
-          <span className="text-sm font-medium text-foreground">Ananya Sharma</span>
+          <span className="text-sm font-medium text-foreground">Mohammed Asif</span>
         </div>
       </div>
     </header>

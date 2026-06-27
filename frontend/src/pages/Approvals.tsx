@@ -218,7 +218,7 @@ export default function Approvals() {
                 className="h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-xs shadow-sm focus:outline-none focus:ring-1 focus:ring-primary appearance-none cursor-pointer pr-8"
               >
                 <option value="All">Assigned: All</option>
-                <option value="Ananya Sharma">Ananya Sharma</option>
+                <option value="Mohammed Asif">Mohammed Asif</option>
                 <option value="Rohit Mehta">Rohit Mehta</option>
                 <option value="Priya Nair">Priya Nair</option>
               </select>

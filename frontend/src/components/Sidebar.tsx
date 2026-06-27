@@ -60,11 +60,11 @@ export default function Sidebar() {
       <div className="px-3 py-4 border-t border-sidebar-border">
         <button className="flex items-center gap-3 w-full px-3 py-2.5 rounded-lg hover:bg-sidebar-accent transition-colors">
           <div className="w-8 h-8 rounded-full bg-sidebar-primary/20 flex items-center justify-center text-xs font-semibold text-sidebar-primary">
-            AS
+            MA
           </div>
           <div className="flex-1 text-left">
             <p className="text-sm font-medium text-sidebar-foreground leading-tight">
-              Ananya Sharma
+              Mohammed Asif
             </p>
             <p className="text-[11px] text-sidebar-foreground/50">Finance Team</p>
           </div>
