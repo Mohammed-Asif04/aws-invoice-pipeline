@@ -69,7 +69,7 @@ export default function Analytics() {
 
       invoices.forEach((inv) => {
         confidenceSum += inv.extractionConfidence || 0;
-        if (inv.status === 'Processed') {
+        if (inv.status === 'Processed' || inv.status === 'Resolved') {
           processedCount++;
           totalAmountProcessed += inv.totalAmount || 0;
           if (inv.approvalTimestamp && (inv.createdAt || inv.receivedOn)) {
@@ -132,8 +132,8 @@ export default function Analytics() {
             invDate.getMonth() === d.getMonth() &&
             invDate.getFullYear() === d.getFullYear()
           ) {
-            if (inv.status === 'Processed') processed++;
-            else if (inv.status === 'In Progress') inProgress++;
+            if (inv.status === 'Processed' || inv.status === 'Resolved') processed++;
+            else if (inv.status === 'In Progress' || inv.status === 'In Review' || inv.status === 'Pending Review') inProgress++;
             else exceptionsCount++;
           }
         });
@@ -196,7 +196,7 @@ export default function Analytics() {
         stat.count++;
         stat.totalVal += inv.totalAmount || 0;
         stat.confSum += inv.extractionConfidence || 0;
-        if (inv.status === 'Processed') {
+        if (inv.status === 'Processed' || inv.status === 'Resolved') {
           stat.successCount++;
         }
       });
