@@ -53,18 +53,23 @@ export default function InvoiceTable({ invoices, onViewDetails }: InvoiceTablePr
   const indexOfFirstItem = indexOfLastItem - itemsPerPage;
   const currentItems = sortedInvoices.slice(indexOfFirstItem, indexOfLastItem);
 
-  const formatAmount = (amount: number, currency: string) => {
+  const formatAmount = (amount?: number, currency?: string) => {
+    if (amount === undefined || amount === null) return '-';
     const symbol = currency === 'INR' ? '₹' : '$';
     return `${symbol} ${amount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   };
 
-  const formatDate = (dateStr: string) => {
+  const formatDate = (dateStr?: string) => {
+    if (!dateStr || dateStr === 'PENDING') return '-';
     const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return '-';
     return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
   };
 
-  const formatDateTime = (dateStr: string) => {
+  const formatDateTime = (dateStr?: string) => {
+    if (!dateStr || dateStr === 'PENDING') return '-';
     const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return '-';
     const date = d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
     const time = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
     return `${date} ${time}`;
