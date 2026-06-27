@@ -69,8 +69,13 @@ export default function Analytics() {
 
       invoices.forEach((inv) => {
         confidenceSum += inv.extractionConfidence || 0;
-        if (inv.status === 'Processed' || inv.status === 'Resolved') {
+        
+        const isSuccessfulExtraction = inv.status === 'Processed' || inv.status === 'Resolved' || (inv.extractionConfidence && inv.extractionConfidence >= 90);
+        if (isSuccessfulExtraction) {
           processedCount++;
+        }
+
+        if (inv.status === 'Processed' || inv.status === 'Resolved') {
           totalAmountProcessed += inv.totalAmount || 0;
           if (inv.approvalTimestamp && (inv.createdAt || inv.receivedOn)) {
             const start = new Date(inv.createdAt || inv.receivedOn).getTime();
