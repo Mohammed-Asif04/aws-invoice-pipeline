@@ -9,7 +9,7 @@
 
 The following architecture diagram represents the 5-stage pipeline, from ingestion to human review.
 
-![Pipeline Architecture](./docs/aws_invoice_pipeline_diagram.svg)
+![Pipeline Architecture](./docs/aws_invoice_pipeline_flow.svg)
 
 ---
 
