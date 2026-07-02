@@ -41,7 +41,7 @@ React Dashboard (Amplify) ← reads from → DynamoDB / API Gateway
 | **Amazon S3** | Raw PDF storage, long-term audit retention of processed invoices |
 | **AWS Lambda** | Event-driven compute — Textract extraction + Bedrock validation |
 | **Amazon Textract** | OCR / intelligent document extraction (tables, forms, key-value pairs) |
-| **Amazon Bedrock (Claude)** | LLM-based validation — duplicate detection, total vs. line-item mismatch |
+| **Amazon Bedrock (Claude)** | LLM-based validation — duplicate detection, total vs. line-item mismatch. Also serves as fallback extraction engine when Textract is unavailable. |
 | **AWS Step Functions** | Workflow orchestration — retries, timeouts, human approval branching |
 | **Amazon DynamoDB** | Operational data store for processed invoices |
 | **AWS Amplify** | Hosts React reviewer dashboard |
@@ -60,37 +60,61 @@ React Dashboard (Amplify) ← reads from → DynamoDB / API Gateway
 - **Manual Upload** also supported via the React frontend (drag-and-drop + browse files)
 
 ### 2. Document Extraction (Lambda: textract-processor)
-- **Trigger**: S3 `ObjectCreated` event on the raw bucket
-- **Action**: Calls Amazon Textract `AnalyzeDocument` / `AnalyzeExpense` API
+- **Trigger**: Invoked by Step Functions (`ExtractDocument` state)
+- **Primary**: Calls Amazon Textract `AnalyzeExpense` API for deep OCR extraction
+- **Fallback**: If Textract raises `SubscriptionRequiredException` (not enabled in account), the Lambda automatically falls back to **Bedrock Converse API** (`global.anthropic.claude-sonnet-4-6`) which accepts the raw PDF/image and returns structured invoice data
 - **Output**: Extracted fields (vendor name, invoice number, date, GSTIN, PO number, line items with HSN/SAC codes, quantities, unit prices, amounts, subtotal, CGST, SGST, total) → stored as JSON
 - **Confidence Scores**: Per-field confidence percentage (e.g., Vendor Name 98%, Invoice Number 99%, etc.)
-- **Error handling**: Retries via Step Functions
+- **GSTIN Detection**: If the standard `TAX_PAYER_ID` field doesn't contain a GSTIN, the processor scans all extracted values for a 15-character alphanumeric Indian GSTIN pattern
+- **Tax Split**: If the invoice provides a single `TAX` field, it's automatically split 50/50 into CGST and SGST (standard for Indian intra-state invoices)
+- **Error handling**: Retries 3× with exponential backoff via Step Functions
 
 ### 3. Intelligent Validation (Lambda: bedrock-validator)
-- **Input**: Extracted JSON from Textract
-- **Action**: Invokes Amazon Bedrock (Claude model) with a structured prompt to:
-  - Validate field completeness and formatting
-  - Check for duplicate invoice numbers against DynamoDB
-  - Flag mismatches between sum of line items and stated total (Amount Mismatch)
-  - Detect missing GSTIN (Missing GSTIN)
-  - Identify unknown vendors (Vendor Not Found)
-  - Detect duplicate invoices (Duplicate Invoice)
-  - Flag low confidence extraction scores (Low Confidence Score)
-  - Assign overall confidence scores
-- **Output**: Validation result with `status` (PROCESSED / IN_REVIEW / EXCEPTION / IN_PROGRESS) and `anomalies[]`
+- **Input**: Extracted JSON from Textract (or Bedrock fallback)
+- **Model**: Amazon Bedrock — `global.anthropic.claude-sonnet-4-6` (configurable via `BedrockModelId` SAM parameter)
+- **Action**: Two-phase validation:
+  1. **Rule-based checks** (run first, in code):
+     - Missing/unknown vendor name → `VENDOR_NOT_FOUND`
+     - Duplicate invoice number (DynamoDB query on `invoiceNumber-index` GSI) → `DUPLICATE_INVOICE`
+     - Missing or malformed GSTIN (validated against 15-char regex: `^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[A-Z0-9]{1}Z[A-Z0-9]{1}$`) → `MISSING_GSTIN`
+     - Amount mismatch: sum of line items vs. stated subtotal/total (1% tolerance, >₹1 absolute threshold) → `AMOUNT_MISMATCH`
+     - Extraction confidence below threshold (default 85%) → `LOW_CONFIDENCE_SCORE`
+  2. **AI validation** (Claude prompt):
+     - Field completeness and reasonableness
+     - Vendor legitimacy assessment
+     - Mathematical consistency (line × qty = amount, sum = subtotal, subtotal + tax = total)
+     - Date formatting and reasonableness
+     - Returns additional anomalies + per-field validation statuses (`MATCHED`, `MISMATCH`, `NOT_FOUND`)
+- **Output**: Validation result with `status` (PROCESSED / IN_REVIEW / EXCEPTION) and `anomalies[]`
+- **Status determination**: 0 anomalies → `PROCESSED`, any HIGH severity → `EXCEPTION`, otherwise → `IN_REVIEW`
+- **Graceful degradation**: If Bedrock invocation fails, only rule-based anomalies are used
 
 ### 4. Orchestration (Step Functions)
-- **State Machine** includes:
-  - `ExtractDocument` → invokes textract-processor Lambda
-  - `ValidateDocument` → invokes bedrock-validator Lambda
-  - `CheckAnomalies` → Choice state branching on validation status
-  - `HumanApproval` → Task token pattern: sends email via SES/SNS with approve/reject links; pauses workflow
-  - `PersistResults` → writes to DynamoDB + S3
-  - `NotifyComplete` → sends completion notification
+- **State Machine Name**: `InvoicePipelineStateMachine-{env}`
+- **Type**: STANDARD (for long-running human approval waits)
+- **States** (from `invoice-pipeline.asl.json`):
+  - `ExtractDocument` → Task: invokes `textract-processor` Lambda (timeout: 120s)
+  - `ValidateDocument` → Task: invokes `bedrock-validator` Lambda (timeout: 60s)
+  - `CheckAnomalies` → Choice: branches on `$.validation.status`
+    - `PROCESSED` → `PersistResults` (happy path)
+    - `EXCEPTION` or `IN_REVIEW` → `HumanApproval`
+    - Default → `HumanApproval`
+  - `HumanApproval` → Task (`.waitForTaskToken`): invokes `approval-handler` with `SEND_APPROVAL_EMAIL` action; **pauses execution** until `SendTaskSuccess` or `SendTaskFailure` is called
+  - `ProcessApprovalResult` → Choice: branches on `$.approvalResult.action`
+    - `APPROVE` → `PersistResults`
+    - `REPROCESS` → `ExtractDocument` (loops back)
+    - Default → `HandleRejection`
+  - `PersistResults` → Task: invokes `audit-logger` with `PERSIST_RESULTS` action
+  - `NotifyComplete` → Task: publishes to SNS topic
+  - `PipelineComplete` → Succeed
+- **Error handling states**: `HandleExtractionError`, `HandleValidationError`, `HandleApprovalError`, `HandlePersistenceError` — each logs via `audit-logger` then transitions to `PipelineFailed` (Fail state)
+- `HandleRejection` → logs rejection via `audit-logger` → `PipelineRejected` (Fail with error `InvoiceRejected`)
+- `HandleApprovalTimeout` → logs timeout → `PipelineTimedOut` (Fail with error `ApprovalTimeout`)
 - **Retry/Timeout semantics**:
-  - Textract: retry 3x with exponential backoff
-  - Bedrock: retry 2x, timeout 60s
-  - Human approval: timeout 72 hours, then auto-escalate or reject
+  - Textract: retry 3× with exponential backoff (interval: 5s, backoff rate: 2.0)
+  - Bedrock: retry 2×, timeout 60s (interval: 3s, backoff rate: 1.5)
+  - Human approval: timeout 72 hours (259,200s), heartbeat every 1 hour (3,600s)
+  - Persistence: retry 3× with exponential backoff
 
 ### 5. Human Approval / Exception Review Flow
 - Step Functions sends a **Task Token** to a callback endpoint
@@ -253,9 +277,14 @@ aws-invoice-pipeline/
 │       └── mock-textract-response.json    # Mock Textract API response
 │
 ├── 📁 docs/
-│   ├── architecture-diagram.png           # Visual architecture diagram
-│   ├── api-reference.md                   # API endpoint documentation
-│   └── deployment-guide.md               # Step-by-step deployment instructions
+│   ├── aws_invoice_pipeline_flow.svg      # Visual architecture flow diagram
+│   ├── api-reference.md                   # Complete REST API specification
+│   ├── api-reference.pdf                  # PDF version of API reference
+│   ├── deployment-guide.md               # Step-by-step deployment instructions
+│   ├── deployment-guide.pdf              # PDF version of deployment guide
+│   ├── overview.md                        # This file — detailed project overview
+│   ├── overview.pdf                       # PDF version of this overview
+│   └── sample-audit-report.json           # Example audit report from a processed invoice
 │
 ├── .env.example                           # Environment variable template
 ├── .gitignore                             # Git ignore rules
@@ -449,13 +478,14 @@ aws-invoice-pipeline/
 
 ## Invoice Statuses
 
-| Status | Badge Color | Meaning |
-|---|---|---|
-| Processed | Green | Successfully validated and persisted |
-| In Progress | Orange/yellow | Currently being processed through pipeline |
-| In Review | Orange | Awaiting human review |
-| Exception | Red | Anomaly detected, requires attention |
-| Resolved | Blue/green | Exception reviewed and resolved |
+| Status | Value | Badge Color | Meaning |
+|---|---|---|---|
+| Processed | `PROCESSED` | Green | Successfully validated and persisted |
+| In Progress | `IN_PROGRESS` | Orange/yellow | Currently being processed through pipeline |
+| In Review | `IN_REVIEW` | Orange | Medium-severity anomaly — awaiting human review |
+| Pending Review | `PENDING_REVIEW` | Yellow | Queued for review but not yet assigned |
+| Exception | `EXCEPTION` | Red | High-severity anomaly detected, requires immediate attention |
+| Resolved | `RESOLVED` | Blue/green | Exception reviewed and resolved (approved or rejected) |
 
 ---
 
